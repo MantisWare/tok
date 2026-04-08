@@ -22,7 +22,7 @@ To apply, you should have:
 
 ### ✍️ How to Apply
 
-1. Open a discussion in [tok-ai/tok Maintainers Applications · Discussions · GitHub](https://github.com/tok-ai/tok/discussions/categories/maintainers-applications) titled **Maintainer Application: [Your GitHub Handle]**
+1. Open a discussion in [MantisWare/tok Maintainers Applications · Discussions · GitHub](https://github.com/MantisWare/tok/discussions/categories/maintainers-applications) titled **Maintainer Application: [Your GitHub Handle]**
 2. In your application, include:
    - The ecosystem(s) you're interested in
    - Your experience with those ecosystems

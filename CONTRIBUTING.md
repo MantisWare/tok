@@ -13,7 +13,7 @@ cargo build --release
 Yeah, crates.io is messy: the name `tok` might not be **this** tok. Until we’re sure the registry entry is unambiguous, prefer:
 
 ```bash
-cargo install --git https://github.com/tok-ai/tok
+cargo install --git https://github.com/MantisWare/tok
 ```
 
 or the [installation guide](INSTALL.md) (binaries, Homebrew, the works). If `tok gain` doesn’t show savings stats, you’ve got the wrong binary.

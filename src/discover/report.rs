@@ -148,7 +148,7 @@ pub fn format_text(report: &DiscoverReport, limit: usize, verbose: bool) -> Stri
 
         out.push_str(&"-".repeat(52));
         out.push('\n');
-        out.push_str("-> github.com/tok-ai/tok/issues\n");
+        out.push_str("-> github.com/MantisWare/tok/issues\n");
     }
 
     // TOK_DISABLED bypass warning

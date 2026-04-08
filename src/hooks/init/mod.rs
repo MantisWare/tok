@@ -35,7 +35,7 @@ const TOK_SLIM_CODEX: &str = include_str!("../../../hooks/codex/tok-awareness.md
 /// Template written by `tok init` when no filters.toml exists yet.
 const FILTERS_TEMPLATE: &str = r#"# Project-local TOK filters — commit this file with your repo.
 # Filters here override user-global and built-in filters.
-# Docs: https://github.com/tok-ai/tok#custom-filters
+# Docs: https://github.com/MantisWare/tok#custom-filters
 schema_version = 1
 
 # Example: suppress build noise from a custom tool
@@ -51,7 +51,7 @@ schema_version = 1
 /// Template for user-global filters (~/.config/tok/filters.toml).
 const FILTERS_GLOBAL_TEMPLATE: &str = r#"# User-global TOK filters — apply to all your projects.
 # Project-local .tok/filters.toml takes precedence over these.
-# Docs: https://github.com/tok-ai/tok#custom-filters
+# Docs: https://github.com/MantisWare/tok#custom-filters
 schema_version = 1
 
 # Example: suppress noise from a tool you use everywhere
@@ -2185,7 +2185,7 @@ fn patch_gemini_settings(
     if patch_mode == PatchMode::Skip {
         println!(
             "\nManual setup needed: add TOK hook to {}\n\
-             See: https://github.com/tok-ai/tok#gemini-cli",
+             See: https://github.com/MantisWare/tok#gemini-cli",
             settings_path.display()
         );
         return Ok(());

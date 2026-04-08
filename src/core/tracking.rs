@@ -973,7 +973,7 @@ impl Tracker {
     ///   using the same matching rules as project-scoped gain. Parse-failure rows are global and
     ///   are not removed in project mode.
     pub fn clear_tracking(&self, project_path: Option<&str>) -> Result<TrackingClearResult> {
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.unchecked_transaction()?;
 
         match project_path {
             Some(p) => {
@@ -1209,6 +1209,24 @@ pub fn args_display(args: &[OsString]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes all tests that touch the tracking SQLite DB. `TOK_DB_PATH` is process-global, so
+    /// parallel tests would otherwise cross-write or read the wrong file.
+    static TRACKING_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn tracking_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        TRACKING_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    struct RestoreCwd(std::path::PathBuf);
+    impl Drop for RestoreCwd {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
 
     // 1. estimate_tokens — verify ~4 chars/token ratio
     #[test]
@@ -1234,6 +1252,7 @@ mod tests {
     // 3. Tracker::record + get_recent — round-trip DB
     #[test]
     fn test_tracker_record_and_recent() {
+        let _guard = tracking_test_lock();
         let tracker = Tracker::new().expect("Failed to create tracker");
 
         // Use unique test identifier to avoid conflicts with other tests
@@ -1258,6 +1277,7 @@ mod tests {
     // 4. track_passthrough doesn't dilute stats (input=0, output=0)
     #[test]
     fn test_track_passthrough_no_dilution() {
+        let _guard = tracking_test_lock();
         let tracker = Tracker::new().expect("Failed to create tracker");
 
         // Use unique test identifiers
@@ -1302,6 +1322,7 @@ mod tests {
     // 5. TimedExecution::track records with exec_time > 0
     #[test]
     fn test_timed_execution_records_time() {
+        let _guard = tracking_test_lock();
         let timer = TimedExecution::start();
         std::thread::sleep(std::time::Duration::from_millis(10));
         timer.track("test cmd", "tok test", "raw input data", "filtered");
@@ -1315,20 +1336,31 @@ mod tests {
     // 6. TimedExecution::track_passthrough records with 0 tokens
     #[test]
     fn test_timed_execution_passthrough() {
+        use std::env;
+        use tempfile::tempdir;
+
+        let _guard = tracking_test_lock();
+        let tmp = tempdir().expect("tempdir");
+        let db = tmp.path().join("history.db");
+        env::set_var("TOK_DB_PATH", &db);
+
         let timer = TimedExecution::start();
-        timer.track_passthrough("git tag", "tok git tag (passthrough)");
+        let marker = format!("passthrough_{}", std::process::id());
+        timer.track_passthrough("git tag", &format!("tok git tag ({marker})"));
 
         let tracker = Tracker::new().expect("Failed to create tracker");
-        let recent = tracker.get_recent(5).expect("Failed to get recent");
+        let recent = tracker.get_recent(50).expect("Failed to get recent");
 
         let pt = recent
             .iter()
-            .find(|r| r.tok_cmd.contains("passthrough"))
+            .find(|r| r.tok_cmd.contains(&marker))
             .expect("Passthrough record not found");
 
         // savings_pct should be 0 for passthrough
         assert_eq!(pt.savings_pct, 0.0);
         assert_eq!(pt.saved_tokens, 0);
+
+        env::remove_var("TOK_DB_PATH");
     }
 
     // 7. get_db_path respects environment variable TOK_DB_PATH
@@ -1336,6 +1368,7 @@ mod tests {
     fn test_custom_db_path_env() {
         use std::env;
 
+        let _guard = tracking_test_lock();
         let custom_path = env::temp_dir().join("tok_test_custom.db");
         env::set_var("TOK_DB_PATH", &custom_path);
 
@@ -1350,6 +1383,7 @@ mod tests {
     fn test_default_db_path() {
         use std::env;
 
+        let _guard = tracking_test_lock();
         // Ensure no env var is set
         env::remove_var("TOK_DB_PATH");
 
@@ -1398,6 +1432,7 @@ mod tests {
     // 12. record_parse_failure + get_parse_failure_summary roundtrip
     #[test]
     fn test_parse_failure_roundtrip() {
+        let _guard = tracking_test_lock();
         let tracker = Tracker::new().expect("Failed to create tracker");
         let test_cmd = format!("git -C /path status test_{}", std::process::id());
 
@@ -1416,6 +1451,7 @@ mod tests {
     // 13. recovery_rate calculation
     #[test]
     fn test_parse_failure_recovery_rate() {
+        let _guard = tracking_test_lock();
         let tracker = Tracker::new().expect("Failed to create tracker");
         let pid = std::process::id();
 
@@ -1434,5 +1470,83 @@ mod tests {
         // We can't assert exact rate because other tests may have added records,
         // but we can verify recovery_rate is between 0 and 100
         assert!(summary.recovery_rate >= 0.0 && summary.recovery_rate <= 100.0);
+    }
+
+    // 14. clear_tracking (global) on isolated DB
+    #[test]
+    fn test_clear_tracking_global() {
+        use std::env;
+        use tempfile::tempdir;
+
+        let _guard = tracking_test_lock();
+        let tmp = tempdir().expect("tempdir");
+        let db = tmp.path().join("history.db");
+        env::set_var("TOK_DB_PATH", &db);
+
+        let tracker = Tracker::new().expect("tracker");
+        let cmd = format!("tok test_clear_global_{}", std::process::id());
+        tracker
+            .record("raw", &cmd, 10, 5, 1)
+            .expect("record command");
+        tracker
+            .record_parse_failure(&cmd, "err", true)
+            .expect("record parse failure");
+
+        let cleared = tracker.clear_tracking(None).expect("clear global");
+        assert_eq!(cleared.commands_removed, 1);
+        assert_eq!(cleared.parse_failures_removed, 1);
+
+        let summary = tracker.get_summary().expect("summary");
+        assert_eq!(summary.total_commands, 0);
+        let pf = tracker.get_parse_failure_summary().expect("pf summary");
+        assert_eq!(pf.total, 0);
+
+        env::remove_var("TOK_DB_PATH");
+    }
+
+    // 15. clear_tracking (project) deletes only matching project_path rows
+    #[test]
+    fn test_clear_tracking_project_scope() {
+        use std::env;
+        use std::fs;
+        use tempfile::tempdir;
+
+        let _guard = tracking_test_lock();
+        let _restore = RestoreCwd(env::current_dir().expect("cwd"));
+        let tmp = tempdir().expect("tempdir");
+        let proj_a = tmp.path().join("proj_a");
+        let proj_b = tmp.path().join("proj_b");
+        fs::create_dir_all(&proj_a).expect("mkdir a");
+        fs::create_dir_all(&proj_b).expect("mkdir b");
+        let db = tmp.path().join("hist.db");
+        let _ = fs::remove_file(&db);
+
+        env::set_var("TOK_DB_PATH", &db);
+
+        env::set_current_dir(&proj_a).expect("cd a");
+        let t = Tracker::new().expect("tracker a");
+        t.record("a", "tok a", 1, 1, 1).expect("rec a");
+        // Must match `current_project_path_string()` used inside `record`, not only `proj_a` join.
+        let path_a_for_clear = env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canon cwd a")
+            .to_string_lossy()
+            .into_owned();
+
+        env::set_current_dir(&proj_b).expect("cd b");
+        let t = Tracker::new().expect("tracker b");
+        t.record("b", "tok b", 1, 1, 1).expect("rec b");
+
+        let cleared = t
+            .clear_tracking(Some(path_a_for_clear.as_str()))
+            .expect("clear project");
+        assert_eq!(cleared.commands_removed, 1);
+        assert_eq!(cleared.parse_failures_removed, 0);
+
+        let summary = t.get_summary().expect("summary");
+        assert_eq!(summary.total_commands, 1);
+
+        env::remove_var("TOK_DB_PATH");
     }
 }

@@ -109,13 +109,13 @@ cargo test test_token_savings
 
 **Option 1: Homebrew**
 ```bash
-brew install tok-ai/tap/tok
+brew install MantisWare/tap/tok
 tok --version  # Should show tok X.Y.Z
 ```
 
 **Option 2: From Source**
 ```bash
-git clone https://github.com/tok-ai/tok.git
+git clone https://github.com/MantisWare/tok.git
 cd tok
 cargo install --path .
 tok --version  # Verify installation
@@ -130,7 +130,7 @@ tok gain  # Should show token savings analytics
 
 **From Source** (Cargo required):
 ```bash
-git clone https://github.com/tok-ai/tok.git
+git clone https://github.com/MantisWare/tok.git
 cd tok
 cargo install --path .
 
@@ -141,7 +141,7 @@ tok --version
 
 **Binary Download** (faster):
 ```bash
-curl -sSL https://github.com/tok-ai/tok/releases/download/v0.16.0/tok-linux-x86_64 -o tok
+curl -sSL https://github.com/MantisWare/tok/releases/download/v0.16.0/tok-linux-x86_64 -o tok
 chmod +x tok
 sudo mv tok /usr/local/bin/
 tok --version
@@ -172,7 +172,7 @@ tok --version
 - **Fix**: Uninstall and reinstall correct TOK
   ```bash
   cargo uninstall tok
-  cargo install --path .  # From tok-ai/tok repo
+  cargo install --path .  # From MantisWare/tok repo
   tok gain --help  # Should work
   ```
 ```

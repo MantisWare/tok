@@ -42,7 +42,7 @@ Use this template to generate GitHub PR review comments. Fill in each section ba
 {- Description of what's done right.}
 
 ---
-*Automated review via [tok](https://github.com/tok-ai/tok) `/pr-triage`*
+*Automated review via [tok](https://github.com/MantisWare/tok) `/pr-triage`*
 ```
 
 ---

@@ -232,10 +232,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          RELEASE_URL="https://github.com/tok-ai/tok/releases/tag/${TAG}"
+          RELEASE_URL="https://github.com/MantisWare/tok/releases/tag/${TAG}"
 
           # Fetch release notes from GitHub API
-          NOTES=$(gh api "repos/tok-ai/tok/releases/tags/${TAG}" --jq '.body' 2>/dev/null | head -c 1800 || echo "")
+          NOTES=$(gh api "repos/MantisWare/tok/releases/tags/${TAG}" --jq '.body' 2>/dev/null | head -c 1800 || echo "")
           DESC=$(echo "${NOTES:-No release notes}" | jq -Rs .)
 
           jq -n \
@@ -265,7 +265,7 @@ jobs:
       - name: Download checksums
         run: |
           gh release download "${{ steps.version.outputs.tag }}" \
-            --repo tok-ai/tok \
+            --repo MantisWare/tok \
             --pattern checksums.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -283,21 +283,21 @@ jobs:
           cat > tok.rb << 'FORMULA'
           class Tok < Formula
             desc "Token Optimization Kit - High-performance CLI proxy to minimize LLM token consumption"
-            homepage "https://www.tok-ai.app"
+            homepage "https://github.com/MantisWare/tok"
             version "VERSION_PLACEHOLDER"
             license "MIT"
 
             if OS.mac? && Hardware::CPU.arm?
-              url "https://github.com/tok-ai/tok/releases/download/TAG_PLACEHOLDER/tok-aarch64-apple-darwin.tar.gz"
+              url "https://github.com/MantisWare/tok/releases/download/TAG_PLACEHOLDER/tok-aarch64-apple-darwin.tar.gz"
               sha256 "SHA_MAC_ARM_PLACEHOLDER"
             elsif OS.mac? && Hardware::CPU.intel?
-              url "https://github.com/tok-ai/tok/releases/download/TAG_PLACEHOLDER/tok-x86_64-apple-darwin.tar.gz"
+              url "https://github.com/MantisWare/tok/releases/download/TAG_PLACEHOLDER/tok-x86_64-apple-darwin.tar.gz"
               sha256 "SHA_MAC_INTEL_PLACEHOLDER"
             elsif OS.linux? && Hardware::CPU.arm?
-              url "https://github.com/tok-ai/tok/releases/download/TAG_PLACEHOLDER/tok-aarch64-unknown-linux-gnu.tar.gz"
+              url "https://github.com/MantisWare/tok/releases/download/TAG_PLACEHOLDER/tok-aarch64-unknown-linux-gnu.tar.gz"
               sha256 "SHA_LINUX_ARM_PLACEHOLDER"
             elsif OS.linux? && Hardware::CPU.intel?
-              url "https://github.com/tok-ai/tok/releases/download/TAG_PLACEHOLDER/tok-x86_64-unknown-linux-musl.tar.gz"
+              url "https://github.com/MantisWare/tok/releases/download/TAG_PLACEHOLDER/tok-x86_64-unknown-linux-musl.tar.gz"
               sha256 "SHA_LINUX_INTEL_PLACEHOLDER"
             end
 
@@ -319,7 +319,7 @@ jobs:
                   # Measure your token savings
                   tok gain
 
-                Full documentation: https://www.tok-ai.app
+                Full documentation: https://github.com/MantisWare/tok
               EOS
             end
 
@@ -340,14 +340,14 @@ jobs:
       - name: Push to homebrew-tap
         run: |
           CONTENT=$(base64 -w 0 tok.rb)
-          SHA=$(gh api repos/tok-ai/homebrew-tap/contents/Formula/tok.rb --jq '.sha' 2>/dev/null || echo "")
+          SHA=$(gh api repos/MantisWare/homebrew-tap/contents/Formula/tok.rb --jq '.sha' 2>/dev/null || echo "")
           if [ -n "$SHA" ]; then
-            gh api -X PUT repos/tok-ai/homebrew-tap/contents/Formula/tok.rb \
+            gh api -X PUT repos/MantisWare/homebrew-tap/contents/Formula/tok.rb \
               -f message="tok ${{ steps.version.outputs.version }}" \
               -f content="$CONTENT" \
               -f sha="$SHA"
           else
-            gh api -X PUT repos/tok-ai/homebrew-tap/contents/Formula/tok.rb \
+            gh api -X PUT repos/MantisWare/homebrew-tap/contents/Formula/tok.rb \
               -f message="tok ${{ steps.version.outputs.version }}" \
               -f content="$CONTENT"
           fi

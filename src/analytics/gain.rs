@@ -403,11 +403,7 @@ fn print_efficiency_meter(pct: f64) {
 }
 
 /// Resolve project scope from --project flag. // added
-fn run_reset(
-    tracker: &Tracker,
-    project_scope: Option<&str>,
-    format: &str,
-) -> Result<()> {
+fn run_reset(tracker: &Tracker, project_scope: Option<&str>, format: &str) -> Result<()> {
     let result = tracker
         .clear_tracking(project_scope)
         .context("Failed to clear tracking data")?;

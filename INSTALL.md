@@ -5,7 +5,7 @@
 Two different projects love the letter T:
 
 1. ✅ **Token Optimization Kit** (this repo) — shrinks CLI output for LLMs  
-   - GitHub: `tok-ai/tok`  
+   - GitHub: `MantisWare/tok`  
    - Binary: **`tok`** — **`tok gain`** must work
 
 2. ❌ **Rust Type Kit** — totally different thing (`reachingforthejack/rtk`, CLI is usually **`rtk`**)  
@@ -45,7 +45,7 @@ cargo uninstall tok
 ### Quick Install (Linux/macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tok-ai/tok/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MantisWare/tok/master/install.sh | sh
 ```
 
 After installation, **verify you have the correct tok**:
@@ -56,8 +56,8 @@ tok gain  # Must show token savings stats (not "command not found")
 ### Alternative: Manual Installation
 
 ```bash
-# From tok-ai repository (not Rust Type Kit / reachingforthejack/rtk)
-cargo install --git https://github.com/tok-ai/tok
+# From the MantisWare/tok repository (not Rust Type Kit / reachingforthejack/rtk)
+cargo install --git https://github.com/MantisWare/tok
 
 # OR (if published and correct on crates.io)
 cargo install tok
@@ -180,7 +180,7 @@ tok init --show
 ### First-Time User (Recommended)
 ```bash
 # 1. Install TOK
-cargo install --git https://github.com/tok-ai/tok
+cargo install --git https://github.com/MantisWare/tok
 tok gain  # Verify (must show token stats)
 
 # 2. Setup with prompts
@@ -370,11 +370,10 @@ cargo install --path . --force
 
 ## Support and Contributing
 
-- **Website**: https://www.tok-ai.app
-- **Contact**: contact@tok-ai.app
+- **Project**: https://github.com/MantisWare/tok
 - **Troubleshooting**: See [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues
-- **GitHub issues**: https://github.com/tok-ai/tok/issues
-- **Pull Requests**: https://github.com/tok-ai/tok/pulls
+- **GitHub issues**: https://github.com/MantisWare/tok/issues
+- **Pull Requests**: https://github.com/MantisWare/tok/pulls
 
 ⚠️ **If you installed the wrong tok (Type Kit)**, see [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#problem-tok-gain-command-not-found)
 

@@ -10,7 +10,7 @@ This is a fork with critical fixes for git argument parsing and modern JavaScrip
 
 ### Name collision warning
 
-**Token Optimization Kit (this repo)** installs the **`tok`** CLI (`tok-ai/tok` on GitHub).
+**Token Optimization Kit (this repo)** installs the **`tok`** CLI (`MantisWare/tok` on GitHub).
 
 **Rust Type Kit** is a different project (`reachingforthejack/rtk` on GitHub; CLI is usually **`rtk`**, e.g. `rtk query`). It does not provide `tok gain`.
 

@@ -187,7 +187,7 @@ gh release view v0.17.0
 ### 3. Installation Verification
 ```bash
 # Test installation from release
-curl -sSL https://github.com/tok-ai/tok/releases/download/v0.17.0/tok-macos-latest -o tok
+curl -sSL https://github.com/MantisWare/tok/releases/download/v0.17.0/tok-macos-latest -o tok
 chmod +x tok
 ./tok --version
 # Should show v0.17.0

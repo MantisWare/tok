@@ -66,7 +66,7 @@ To refresh after code changes:
 cargo install --path --force .
 ```
 
-> **Crates.io note:** The name `tok` on crates.io may not refer to this project. Prefer `cargo install --git https://github.com/tok-ai/tok` or install from this path. If `tok gain` does not show token stats, you are not running this binary—see [README.md](../../README.md#verify-installation).
+> **Crates.io note:** The name `tok` on crates.io may not refer to this project. Prefer `cargo install --git https://github.com/MantisWare/tok` or install from this path. If `tok gain` does not show token stats, you are not running this binary—see [README.md](../../README.md#verify-installation).
 
 ## Test
 

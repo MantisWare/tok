@@ -1497,6 +1497,18 @@ mod tests {
     }
 
     #[test]
+    fn test_gain_reset_flag_parses() {
+        let result = Cli::try_parse_from(["tok", "gain", "--reset"]);
+        assert!(result.is_ok());
+        if let Ok(cli) = result {
+            match cli.command {
+                Commands::Gain { reset, .. } => assert!(reset),
+                _ => panic!("Expected Gain command"),
+            }
+        }
+    }
+
+    #[test]
     fn test_meta_commands_reject_bad_flags() {
         // TOK meta-commands should produce parse errors (not fall through to raw execution).
         // Skip "proxy" because it uses trailing_var_arg (accepts any args by design).

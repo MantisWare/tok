@@ -4,8 +4,7 @@
 
 Found something sketchy? Please tell us privately before it turns into a Twitter thread:
 
-- **Email**: security@tok-ai.dev
-- **GitHub**: [Private security advisory](https://github.com/tok-ai/tok/security/advisories/new) (preferred when available)
+- **GitHub**: [Private security advisory](https://github.com/MantisWare/tok/security/advisories/new) (preferred)
 - **Response time**: We aim to acknowledge reports within 48 hours
 - **Disclosure**: We follow responsible disclosure practices (90-day embargo by default)
 
@@ -254,8 +253,8 @@ When vulnerabilities are reported:
 
 ## Contact
 
-- **Security issues**: security@tok-ai.dev
-- **General questions**: https://github.com/tok-ai/tok/discussions
+- **Security issues**: [GitHub private security advisories](https://github.com/MantisWare/tok/security/advisories/new)
+- **General questions**: https://github.com/MantisWare/tok/discussions
 - **Maintainers**: @FlorianBruniaux (active fork maintainer)
 
 ---

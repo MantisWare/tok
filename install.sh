@@ -1,10 +1,10 @@
 #!/usr/bin/env sh
-# tok installer - https://github.com/tok-ai/tok
-# Usage: curl -fsSL https://raw.githubusercontent.com/tok-ai/tok/refs/heads/master/install.sh | sh
+# tok installer - https://github.com/MantisWare/tok
+# Usage: curl -fsSL https://raw.githubusercontent.com/MantisWare/tok/refs/heads/master/install.sh | sh
 
 set -e
 
-REPO="tok-ai/tok"
+REPO="MantisWare/tok"
 BINARY_NAME="tok"
 INSTALL_DIR="${TOK_INSTALL_DIR:-$HOME/.local/bin}"
 

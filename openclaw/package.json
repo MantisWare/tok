@@ -1,15 +1,15 @@
 {
-  "name": "@tok-ai/tok-rewrite",
+  "name": "@mantisware/tok-rewrite",
   "version": "1.0.0",
   "description": "TOK plugin for OpenClaw — rewrites shell commands for 60-90% LLM token savings",
   "main": "index.ts",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tok-ai/tok",
+    "url": "https://github.com/MantisWare/tok",
     "directory": "openclaw"
   },
-  "homepage": "https://github.com/tok-ai/tok",
+  "homepage": "https://github.com/MantisWare/tok",
   "keywords": [
     "tok",
     "openclaw",

@@ -29,7 +29,7 @@ which tok       # Verify correct binary path
 ```
 
 > ⚠️ **Different tool**: If `tok gain` fails, confirm you installed Token Optimization Kit. Rust Type Kit is `reachingforthejack/rtk` (usually `rtk`, not this CLI).
-> (Rust Type Kit) installed instead. Check `which tok` and reinstall from tok-ai/tok.
+> (Rust Type Kit) installed instead. Check `which tok` and reinstall from MantisWare/tok.
 
 ## How the hook works
 

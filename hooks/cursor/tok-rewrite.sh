@@ -15,7 +15,7 @@ if ! command -v jq &>/dev/null; then
 fi
 
 if ! command -v tok &>/dev/null; then
-  echo "[tok] WARNING: tok is not installed or not in PATH. Hook cannot rewrite commands. Install: https://github.com/tok-ai/tok#installation" >&2
+  echo "[tok] WARNING: tok is not installed or not in PATH. Hook cannot rewrite commands. Install: https://github.com/MantisWare/tok#installation" >&2
   exit 0
 fi
 

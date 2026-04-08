@@ -19,7 +19,7 @@ TOK must be installed and available in `$PATH`:
 ```bash
 brew install tok
 # or
-curl -fsSL https://raw.githubusercontent.com/tok-ai/tok/refs/heads/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MantisWare/tok/refs/heads/master/install.sh | sh
 ```
 
 ### Install the plugin
@@ -61,7 +61,7 @@ In `openclaw.json`:
 
 ## What gets rewritten
 
-Everything that `tok rewrite` supports (30+ commands). See the [full command list](https://github.com/tok-ai/tok#commands).
+Everything that `tok rewrite` supports (30+ commands). See the [full command list](https://github.com/MantisWare/tok#commands).
 
 ## What's NOT rewritten
 

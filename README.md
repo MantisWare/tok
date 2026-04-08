@@ -1,26 +1,9 @@
 <p align="center">
-  <img src="https://avatars.githubusercontent.com/u/258253854?v=4" alt="TOK - Token Optimization Kit" width="500">
+  <img src="docs/logo.png" alt="TOK - Token Optimization Kit" width="500">
 </p>
 
 <p align="center">
   <strong>CLI proxy that shaves 60–90% off the tokens your LLM eats — same commands, less wallpaper</strong>
-</p>
-
-<p align="center">
-  <a href="https://github.com/tok-ai/tok/actions"><img src="https://github.com/tok-ai/tok/workflows/Security%20Check/badge.svg" alt="CI"></a>
-  <a href="https://github.com/tok-ai/tok/releases"><img src="https://img.shields.io/github/v/release/tok-ai/tok" alt="Release"></a>
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
-  <a href="https://discord.gg/RySmvNF5kF"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord" alt="Discord"></a>
-  <a href="https://formulae.brew.sh/formula/tok"><img src="https://img.shields.io/homebrew/v/tok" alt="Homebrew"></a>
-</p>
-
-<p align="center">
-  <a href="https://www.tok-ai.app">Website</a> &bull;
-  <a href="#installation">Install</a> &bull;
-  <a href="docs/TROUBLESHOOTING.md">Troubleshooting</a> &bull;
-  <a href="docs/contributing/DEVELOPMENT.md">Development</a> &bull;
-  <a href="docs/contributing/ARCHITECTURE.md">Architecture</a> &bull;
-  <a href="https://discord.gg/RySmvNF5kF">Discord</a>
 </p>
 
 ---
@@ -49,35 +32,13 @@
 
 ## Installation
 
-### Homebrew (recommended)
-
-```bash
-brew install tok
-```
-
-### Quick Install (Linux/macOS)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/tok-ai/tok/refs/heads/master/install.sh | sh
-```
-
-> Installs to `~/.local/bin`. Add to PATH if needed:
-> ```bash
-> echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc
-> ```
-
 ### Cargo
 
 ```bash
-cargo install --git https://github.com/tok-ai/tok
+cargo install --git https://github.com/MantisWare/tok
 ```
 
-### Pre-built Binaries
-
-Download from [releases](https://github.com/tok-ai/tok/releases):
-- macOS: `tok-x86_64-apple-darwin.tar.gz` / `tok-aarch64-apple-darwin.tar.gz`
-- Linux: `tok-x86_64-unknown-linux-musl.tar.gz` / `tok-aarch64-unknown-linux-gnu.tar.gz`
-- Windows: `tok-x86_64-pc-windows-msvc.zip`
+For more options later, see **[INSTALL.md](INSTALL.md)**.
 
 ### Verify Installation
 
@@ -396,7 +357,7 @@ Plugin in `openclaw/` directory. Uses `before_tool_call` hook, delegates to `tok
 
 ### Mistral Vibe (planned)
 
-Blocked on upstream BeforeToolCallback support ([mistral-vibe#531](https://github.com/mistralai/mistral-vibe/issues/531), [PR #533](https://github.com/mistralai/mistral-vibe/pull/533)). Tracked in [#800](https://github.com/tok-ai/tok/issues/800).
+Blocked on upstream BeforeToolCallback support ([mistral-vibe#531](https://github.com/mistralai/mistral-vibe/issues/531), [PR #533](https://github.com/mistralai/mistral-vibe/pull/533)). Tracked in [#800](https://github.com/MantisWare/tok/issues/800).
 
 ### Commands Rewritten
 
@@ -464,7 +425,6 @@ FAILED: 2/15 tests
 ```bash
 tok init -g --uninstall     # Remove hook, TOK.md, settings.json entry
 cargo uninstall tok          # Remove binary
-brew uninstall tok           # If installed via Homebrew
 ```
 
 ## Documentation
@@ -499,7 +459,7 @@ enabled = false
 
 ## Contributing
 
-Contributions welcome! Please open an issue or PR on [GitHub](https://github.com/tok-ai/tok).
+Contributions welcome! Please open an issue or PR on [GitHub](https://github.com/MantisWare/tok).
 
 Join the community on [Discord](https://discord.gg/RySmvNF5kF).
 

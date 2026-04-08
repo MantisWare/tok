@@ -3,7 +3,7 @@
   "name": "TOK Token Optimizer",
   "version": "1.0.0",
   "description": "Transparently rewrites shell commands to their TOK equivalents for 60-90% LLM token savings",
-  "homepage": "https://github.com/tok-ai/tok",
+  "homepage": "https://github.com/MantisWare/tok",
   "license": "MIT",
   "configSchema": {
     "type": "object",

@@ -369,7 +369,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install TOK
-        run: cargo install --git https://github.com/tok-ai/tok
+        run: cargo install --git https://github.com/MantisWare/tok
 
       - name: Export weekly stats
         run: |
@@ -444,7 +444,7 @@ if __name__ == "__main__":
 ```rust
 // In your Cargo.toml
 // [dependencies]
-// tok = { git = "https://github.com/tok-ai/tok" }
+// tok = { git = "https://github.com/MantisWare/tok" }
 
 use tok::tracking::{Tracker, TimedExecution};
 use anyhow::Result;

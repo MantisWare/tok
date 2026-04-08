@@ -24,7 +24,7 @@ else
     echo -e "   ${RED}❌ TOK is NOT installed${NC}"
     echo ""
     echo "   Install with:"
-    echo "   curl -fsSL https://github.com/tok-ai/tok/blob/master/install.sh| sh"
+    echo "   curl -fsSL https://github.com/MantisWare/tok/blob/master/install.sh| sh"
     exit 1
 fi
 echo ""
@@ -45,7 +45,7 @@ else
     echo ""
     echo "   You installed the wrong package. Fix it with:"
     echo "   cargo uninstall tok"
-    echo "   curl -fsSL https://github.com/tok-ai/tok/blob/master/install.sh | sh"
+    echo "   curl -fsSL https://github.com/MantisWare/tok/blob/master/install.sh | sh"
     CORRECT_TOK=false
 fi
 echo ""
@@ -142,7 +142,7 @@ if [ ${#MISSING_FEATURES[@]} -gt 0 ]; then
     echo ""
     echo "To get all features, install the fork:"
     echo "  cargo uninstall tok"
-    echo "  curl -fsSL https://github.com/tok-ai/tok/blob/master/install.sh | sh"
+    echo "  curl -fsSL https://github.com/MantisWare/tok/blob/master/install.sh | sh"
     echo "  cd tok && git checkout feat/all-features"
     echo "  cargo install --path . --force"
 else

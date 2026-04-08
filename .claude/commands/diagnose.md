@@ -173,7 +173,7 @@ options:
     description: "Installer TOK localement (si dans le repo)"
   - label: "cargo install tok"
     description: "Installer TOK depuis crates.io (dernière release)"
-  - label: "brew install tok-ai/tap/tok"
+  - label: "brew install MantisWare/tap/tok"
     description: "Installer TOK via Homebrew (macOS/Linux)"
 ```
 
@@ -199,7 +199,7 @@ options:
 
 ### Fix 1 : Installer TOK localement
 ```bash
-cd /Users/florianbruniaux/Sites/tok-ai/tok
+cd /Users/florianbruniaux/Sites/MantisWare/tok
 cargo install --path .
 # Vérifier installation
 which tok && tok --version
@@ -345,7 +345,7 @@ chmod +x .claude/hooks/*.sh
 **Upgrade recommendation**: If running v0.15.x or older, upgrade to v0.16.x:
 
 ```bash
-cd /Users/florianbruniaux/Sites/tok-ai/tok
+cd /Users/florianbruniaux/Sites/MantisWare/tok
 git pull origin main
 cargo install --path . --force
 tok --version  # Should show 0.16.x or newer

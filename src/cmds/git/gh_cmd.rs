@@ -958,20 +958,20 @@ mod tests {
 
     #[test]
     fn test_extract_identifier_with_repo_flag_after() {
-        // gh issue view 185 -R tok-ai/tok
-        let args: Vec<String> = vec!["185".into(), "-R".into(), "tok-ai/tok".into()];
+        // gh issue view 185 -R MantisWare/tok
+        let args: Vec<String> = vec!["185".into(), "-R".into(), "MantisWare/tok".into()];
         let (id, extra) = extract_identifier_and_extra_args(&args).unwrap();
         assert_eq!(id, "185");
-        assert_eq!(extra, vec!["-R", "tok-ai/tok"]);
+        assert_eq!(extra, vec!["-R", "MantisWare/tok"]);
     }
 
     #[test]
     fn test_extract_identifier_with_repo_flag_before() {
-        // gh issue view -R tok-ai/tok 185
-        let args: Vec<String> = vec!["-R".into(), "tok-ai/tok".into(), "185".into()];
+        // gh issue view -R MantisWare/tok 185
+        let args: Vec<String> = vec!["-R".into(), "MantisWare/tok".into(), "185".into()];
         let (id, extra) = extract_identifier_and_extra_args(&args).unwrap();
         assert_eq!(id, "185");
-        assert_eq!(extra, vec!["-R", "tok-ai/tok"]);
+        assert_eq!(extra, vec!["-R", "MantisWare/tok"]);
     }
 
     #[test]
@@ -991,7 +991,7 @@ mod tests {
     #[test]
     fn test_extract_identifier_only_flags() {
         // No positional identifier, only flags
-        let args: Vec<String> = vec!["-R".into(), "tok-ai/tok".into()];
+        let args: Vec<String> = vec!["-R".into(), "MantisWare/tok".into()];
         assert!(extract_identifier_and_extra_args(&args).is_none());
     }
 
@@ -1274,8 +1274,8 @@ mod tests {
 
 Added smart markdown filtering for gh issue/pr view commands.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/tok-ai/tok/ci.yml)](https://github.com/tok-ai/tok/actions)
-[![Coverage](https://img.shields.io/codecov/c/github/tok-ai/tok)](https://codecov.io/gh/tok-ai/tok)
+[![CI](https://img.shields.io/github/actions/workflow/status/MantisWare/tok/ci.yml)](https://github.com/MantisWare/tok/actions)
+[![Coverage](https://img.shields.io/codecov/c/github/MantisWare/tok)](https://codecov.io/gh/MantisWare/tok)
 
 ![screenshot](https://user-images.githubusercontent.com/123/screenshot.png)
 

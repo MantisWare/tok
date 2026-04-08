@@ -14,7 +14,7 @@ tok: 'gain' is not a tok command. See 'tok --help'.
 ```
 
 ### Root Cause
-You likely installed a **different Rust crate** that also provides a `tok` binary, or an incomplete build. **Token Optimization Kit** is this project (`tok-ai/tok`). **Rust Type Kit** is unrelated (`reachingforthejack/rtk`, usually the **`rtk`** command).
+You likely installed a **different Rust crate** that also provides a `tok` binary, or an incomplete build. **Token Optimization Kit** is this project (`MantisWare/tok`). **Rust Type Kit** is unrelated (`reachingforthejack/rtk`, usually the **`rtk`** command).
 
 ### Solution
 
@@ -27,12 +27,12 @@ cargo uninstall tok
 
 #### Quick install (Linux/macOS)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tok-ai/tok/refs/heads/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MantisWare/tok/refs/heads/master/install.sh | sh
 ```
 
 #### Alternative: Manual Installation
 ```bash
-cargo install --git https://github.com/tok-ai/tok
+cargo install --git https://github.com/MantisWare/tok
 ```
 
 **3. Verify installation:**
@@ -51,7 +51,7 @@ If `tok gain` now works, installation is correct.
 
 | Project | Repository | Purpose | Typical CLI |
 |---------|-----------|---------|-------------|
-| **Token Optimization Kit** ✅ | tok-ai/tok | LLM token optimizer for Claude Code | `tok` (`tok gain`) |
+| **Token Optimization Kit** ✅ | MantisWare/tok | LLM token optimizer for Claude Code | `tok` (`tok gain`) |
 | **Rust Type Kit** ❌ | reachingforthejack/rtk | Rust codebase query and type generator | `rtk` (`rtk query`) |
 
 ### How to identify Token Optimization Kit
@@ -74,10 +74,10 @@ The crates.io package name `tok` may refer to a **different** crate than this pr
 
 ```bash
 # CORRECT - Token Optimization Kit
-cargo install --git https://github.com/tok-ai/tok
+cargo install --git https://github.com/MantisWare/tok
 
 # OR install from fork
-git clone https://github.com/tok-ai/tok.git
+git clone https://github.com/MantisWare/tok.git
 cd tok && git checkout feat/all-features
 cargo install --path . --force
 ```
@@ -217,7 +217,7 @@ On Windows, Node.js tools (vitest, eslint, tsc, etc.) are installed as `.CMD` or
 Update to tok v0.23.1+ which resolves this via the `which` crate for proper PATH+PATHEXT resolution. All 16+ command modules now use `resolved_command()` instead of `Command::new()`.
 
 ```bash
-cargo install --git https://github.com/tok-ai/tok
+cargo install --git https://github.com/MantisWare/tok
 tok --version  # Should be 0.23.1+
 ```
 
@@ -309,15 +309,15 @@ rustc --version  # Should be 1.70+ for most features
 ```
 
 **4. If still fails, report issue:**
-- GitHub: https://github.com/tok-ai/tok/issues
+- GitHub: https://github.com/MantisWare/tok/issues
 
 ---
 
 ## Need More Help?
 
 **Report issues:**
-- Fork-specific: https://github.com/tok-ai/tok/issues
-- Upstream: https://github.com/tok-ai/tok/issues
+- Fork-specific: https://github.com/MantisWare/tok/issues
+- Upstream: https://github.com/MantisWare/tok/issues
 
 **Run the diagnostic script:**
 ```bash
