@@ -1,0 +1,11 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+/private/tmp/TokDotnetSmoke/Broken.cs(7,17): error CS1525: Invalid expression term ';' [/private/tmp/TokDotnetSmoke/TokDotnetSmoke.csproj]
+
+Build FAILED.
+
+/private/tmp/TokDotnetSmoke/Broken.cs(7,17): error CS1525: Invalid expression term ';' [/private/tmp/TokDotnetSmoke/TokDotnetSmoke.csproj]
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:00.76

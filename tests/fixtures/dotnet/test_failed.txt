@@ -1,0 +1,18 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  TokDotnetSmoke -> /private/tmp/TokDotnetSmoke/bin/Debug/net10.0/TokDotnetSmoke.dll
+Test run for /private/tmp/TokDotnetSmoke/bin/Debug/net10.0/TokDotnetSmoke.dll (.NETCoreApp,Version=v10.0)
+VSTest version 18.0.1 (arm64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.11]     TokDotnetSmoke.UnitTest1.Test1 [FAIL]
+  Failed TokDotnetSmoke.UnitTest1.Test1 [4 ms]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+Expected: 2
+Actual:   3
+  Stack Trace:
+     at TokDotnetSmoke.UnitTest1.Test1() in /private/tmp/TokDotnetSmoke/UnitTest1.cs:line 8
+
+Failed!  - Failed:     1, Passed:     0, Skipped:     0, Total:     1, Duration: 13 ms - TokDotnetSmoke.dll (net10.0)

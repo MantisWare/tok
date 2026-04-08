@@ -1,0 +1,2409 @@
+//! Matches shell commands against known TOK rewrite rules to decide how to handle them.
+
+use lazy_static::lazy_static;
+use regex::{Regex, RegexSet};
+
+use super::lexer::{tokenize, TokenKind};
+use super::rules::{IGNORED_EXACT, IGNORED_PREFIXES, RULES};
+
+/// Result of classifying a command.
+#[derive(Debug, PartialEq)]
+pub enum Classification {
+    Supported {
+        tok_equivalent: &'static str,
+        category: &'static str,
+        estimated_savings_pct: f64,
+        status: super::report::TokStatus,
+    },
+    Unsupported {
+        base_command: String,
+    },
+    Ignored,
+}
+
+/// Average token counts per category for estimation when no output_len available.
+pub fn category_avg_tokens(category: &str, subcmd: &str) -> usize {
+    match category {
+        "Git" => match subcmd {
+            "log" | "diff" | "show" => 200,
+            _ => 40,
+        },
+        "Cargo" => match subcmd {
+            "test" => 500,
+            _ => 150,
+        },
+        "Tests" => 800,
+        "Files" => 100,
+        "Build" => 300,
+        "Infra" => 120,
+        "Network" => 150,
+        "GitHub" => 200,
+        "PackageManager" => 150,
+        _ => 150,
+    }
+}
+
+lazy_static! {
+    static ref REGEX_SET: RegexSet =
+        RegexSet::new(RULES.iter().map(|r| r.pattern)).expect("invalid regex patterns");
+    static ref COMPILED: Vec<Regex> = RULES
+        .iter()
+        .map(|r| Regex::new(r.pattern).expect("invalid regex"))
+        .collect();
+    static ref ENV_PREFIX: Regex = {
+        let double_quoted = r#""(?:[^"\\]|\\.)*""#;
+        let single_quoted = r#"'(?:[^'\\]|\\.)*'"#;
+        let unquoted = r#"[^\s]*"#;
+        let env_value = format!("(?:{}|{}|{})", double_quoted, single_quoted, unquoted);
+        let env_assign = format!(r#"[A-Z_][A-Z0-9_]*={}"#, env_value);
+        Regex::new(&format!(r#"^(?:sudo\s+|env\s+|{}\s+)+"#, env_assign)).unwrap()
+    };
+    // Git global options that appear before the subcommand: -C <path>, -c <key=val>,
+    // --git-dir <dir>, --work-tree <dir>, and flag-only options (#163)
+    static ref GIT_GLOBAL_OPT: Regex =
+        Regex::new(r"^(?:(?:-C\s+\S+|-c\s+\S+|--git-dir(?:=\S+|\s+\S+)|--work-tree(?:=\S+|\s+\S+)|--no-pager|--no-optional-locks|--bare|--literal-pathspecs)\s+)+").unwrap();
+    static ref HEAD_N: Regex = Regex::new(r"^head\s+-(\d+)\s+(.+)$").unwrap();
+    static ref HEAD_LINES: Regex = Regex::new(r"^head\s+--lines=(\d+)\s+(.+)$").unwrap();
+    static ref TAIL_N: Regex = Regex::new(r"^tail\s+-(\d+)\s+(.+)$").unwrap();
+    static ref TAIL_N_SPACE: Regex = Regex::new(r"^tail\s+-n\s+(\d+)\s+(.+)$").unwrap();
+    static ref TAIL_LINES_EQ: Regex = Regex::new(r"^tail\s+--lines=(\d+)\s+(.+)$").unwrap();
+    static ref TAIL_LINES_SPACE: Regex = Regex::new(r"^tail\s+--lines\s+(\d+)\s+(.+)$").unwrap();
+}
+
+/// Classify a single (already-split) command.
+pub fn classify_command(cmd: &str) -> Classification {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return Classification::Ignored;
+    }
+
+    // Check ignored
+    for exact in IGNORED_EXACT {
+        if trimmed == *exact {
+            return Classification::Ignored;
+        }
+    }
+    for prefix in IGNORED_PREFIXES {
+        if trimmed.starts_with(prefix) {
+            return Classification::Ignored;
+        }
+    }
+
+    // Strip env prefixes (sudo, env VAR=val, VAR=val)
+    let stripped = ENV_PREFIX.replace(trimmed, "");
+    let cmd_clean = stripped.trim();
+    if cmd_clean.is_empty() {
+        return Classification::Ignored;
+    }
+
+    // Normalize absolute binary paths: /usr/bin/grep → grep (#485)
+    let cmd_normalized = strip_absolute_path(cmd_clean);
+    // Strip git global options: git -C /tmp status → git status (#163)
+    let cmd_normalized = strip_git_global_opts(&cmd_normalized);
+    let cmd_clean = cmd_normalized.as_str();
+
+    // Exclude cat/head/tail with redirect operators — these are writes, not reads (#315)
+    if cmd_clean.starts_with("cat ")
+        || cmd_clean.starts_with("head ")
+        || cmd_clean.starts_with("tail ")
+    {
+        let has_redirect = cmd_clean
+            .split_whitespace()
+            .skip(1)
+            .any(|t| t.starts_with('>') || t == "<" || t.starts_with(">>"));
+        if has_redirect {
+            return Classification::Unsupported {
+                base_command: cmd_clean
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("cat")
+                    .to_string(),
+            };
+        }
+    }
+
+    // Fast check with RegexSet — take the last (most specific) match
+    let matches: Vec<usize> = REGEX_SET.matches(cmd_clean).into_iter().collect();
+    if let Some(&idx) = matches.last() {
+        let rule = &RULES[idx];
+
+        // Extract subcommand for savings override and status detection
+        let (savings, status) = if let Some(caps) = COMPILED[idx].captures(cmd_clean) {
+            if let Some(sub) = caps.get(1) {
+                let subcmd = sub.as_str();
+                // Check if this subcommand has a special status
+                let status = rule
+                    .subcmd_status
+                    .iter()
+                    .find(|(s, _)| *s == subcmd)
+                    .map(|(_, st)| *st)
+                    .unwrap_or(super::report::TokStatus::Existing);
+
+                // Check if this subcommand has custom savings
+                let savings = rule
+                    .subcmd_savings
+                    .iter()
+                    .find(|(s, _)| *s == subcmd)
+                    .map(|(_, pct)| *pct)
+                    .unwrap_or(rule.savings_pct);
+
+                (savings, status)
+            } else {
+                (rule.savings_pct, super::report::TokStatus::Existing)
+            }
+        } else {
+            (rule.savings_pct, super::report::TokStatus::Existing)
+        };
+
+        Classification::Supported {
+            tok_equivalent: rule.tok_cmd,
+            category: rule.category,
+            estimated_savings_pct: savings,
+            status,
+        }
+    } else {
+        // Extract base command for unsupported
+        let base = extract_base_command(cmd_clean);
+        if base.is_empty() {
+            Classification::Ignored
+        } else {
+            Classification::Unsupported {
+                base_command: base.to_string(),
+            }
+        }
+    }
+}
+
+/// Extract the base command (first word, or first two if it looks like a subcommand pattern).
+fn extract_base_command(cmd: &str) -> &str {
+    let parts: Vec<&str> = cmd.splitn(3, char::is_whitespace).collect();
+    match parts.len() {
+        0 => "",
+        1 => parts[0],
+        _ => {
+            let second = parts[1];
+            // If the second token looks like a subcommand (no leading -)
+            if !second.starts_with('-') && !second.contains('/') && !second.contains('.') {
+                // Return "cmd subcmd"
+                let end = cmd
+                    .find(char::is_whitespace)
+                    .and_then(|i| {
+                        let rest = &cmd[i..];
+                        let trimmed = rest.trim_start();
+                        trimmed
+                            .find(char::is_whitespace)
+                            .map(|j| i + (rest.len() - trimmed.len()) + j)
+                    })
+                    .unwrap_or(cmd.len());
+                &cmd[..end]
+            } else {
+                parts[0]
+            }
+        }
+    }
+}
+
+pub fn split_command_chain(cmd: &str) -> Vec<&str> {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return vec![];
+    }
+
+    if trimmed.contains("<<") || trimmed.contains("$((") {
+        return vec![trimmed];
+    }
+
+    let tokens = tokenize(trimmed);
+    let mut results = Vec::new();
+    let mut seg_start: usize = 0;
+
+    for tok in &tokens {
+        match tok.kind {
+            TokenKind::Operator => {
+                let segment = trimmed[seg_start..tok.offset].trim();
+                if !segment.is_empty() {
+                    results.push(segment);
+                }
+                seg_start = tok.offset + tok.value.len();
+            }
+            TokenKind::Pipe => {
+                let segment = trimmed[seg_start..tok.offset].trim();
+                if !segment.is_empty() {
+                    results.push(segment);
+                }
+                return results;
+            }
+            _ => {}
+        }
+    }
+
+    let segment = trimmed[seg_start..].trim();
+    if !segment.is_empty() {
+        results.push(segment);
+    }
+
+    results
+}
+
+/// Strip git global options before the subcommand (#163).
+/// `git -C /tmp status` → `git status`, preserving the rest.
+/// Returns the original string unchanged if not a git command.
+fn strip_git_global_opts(cmd: &str) -> String {
+    // Only applies to commands starting with "git "
+    if !cmd.starts_with("git ") {
+        return cmd.to_string();
+    }
+    let after_git = &cmd[4..]; // skip "git "
+    let stripped = GIT_GLOBAL_OPT.replace(after_git, "");
+    format!("git {}", stripped.trim())
+}
+
+/// Normalize absolute binary paths: `/usr/bin/grep -rn foo` → `grep -rn foo` (#485)
+/// Only strips if the first word contains a `/` (Unix path).
+fn strip_absolute_path(cmd: &str) -> String {
+    let first_space = cmd.find(' ');
+    let first_word = match first_space {
+        Some(pos) => &cmd[..pos],
+        None => cmd,
+    };
+    if first_word.contains('/') {
+        // Extract basename
+        let basename = first_word.rsplit('/').next().unwrap_or(first_word);
+        if basename.is_empty() {
+            return cmd.to_string();
+        }
+        match first_space {
+            Some(pos) => format!("{}{}", basename, &cmd[pos..]),
+            None => basename.to_string(),
+        }
+    } else {
+        cmd.to_string()
+    }
+}
+
+/// Check if a command has TOK_DISABLED= prefix in its env prefix portion.
+pub fn has_tok_disabled_prefix(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    let stripped = ENV_PREFIX.replace(trimmed, "");
+    let prefix_len = trimmed.len() - stripped.len();
+    let prefix_part = &trimmed[..prefix_len];
+    prefix_part.contains("TOK_DISABLED=")
+}
+
+/// Strip TOK_DISABLED=X and other env prefixes, return the actual command.
+pub fn strip_disabled_prefix(cmd: &str) -> &str {
+    let trimmed = cmd.trim();
+    let stripped = ENV_PREFIX.replace(trimmed, "");
+    // stripped is a Cow<str> that borrows from trimmed when no replacement happens.
+    // We need to return a &str into the original, so compute the offset.
+    let prefix_len = trimmed.len() - stripped.len();
+    trimmed[prefix_len..].trim_start()
+}
+
+fn strip_trailing_redirects(cmd: &str) -> (&str, &str) {
+    let tokens = tokenize(cmd);
+    if tokens.is_empty() {
+        return (cmd, "");
+    }
+
+    let mut redir_boundary = tokens.len();
+    let mut i = tokens.len();
+    while i > 0 {
+        i -= 1;
+        match tokens[i].kind {
+            TokenKind::Redirect => {
+                redir_boundary = i;
+            }
+            TokenKind::Arg => {
+                if i > 0 && tokens[i - 1].kind == TokenKind::Redirect {
+                    redir_boundary = i - 1;
+                    i -= 1;
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    if redir_boundary >= tokens.len() {
+        return (cmd, "");
+    }
+
+    let cut = tokens[redir_boundary].offset;
+    let cmd_part = cmd[..cut].trim_end();
+    let redir_part = &cmd[cmd_part.len()..];
+    (cmd_part, redir_part)
+}
+
+/// Returns `None` if the command is unsupported or ignored (hook should pass through).
+///
+/// Handles compound commands (`&&`, `||`, `;`) by rewriting each segment independently.
+/// For pipes (`|`), only rewrites the first command (the filter stays raw).
+pub fn rewrite_command(cmd: &str, excluded: &[String]) -> Option<String> {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Heredoc or arithmetic expansion — unsafe to split/rewrite
+    if trimmed.contains("<<") || trimmed.contains("$((") {
+        return None;
+    }
+
+    // Simple (non-compound) already-TOK command — return as-is.
+    // For compound commands that start with "tok" (e.g. "tok git add . && cargo test"),
+    // fall through to rewrite_compound so the remaining segments get rewritten.
+    let has_compound = trimmed.contains("&&")
+        || trimmed.contains("||")
+        || trimmed.contains(';')
+        || trimmed.contains('|')
+        || trimmed.contains(" & ");
+    if !has_compound && (trimmed.starts_with("tok ") || trimmed == "tok") {
+        return Some(trimmed.to_string());
+    }
+
+    rewrite_compound(trimmed, excluded)
+}
+
+/// Rewrite a compound command (with `&&`, `||`, `;`, `|`) by rewriting each segment.
+fn rewrite_compound(cmd: &str, excluded: &[String]) -> Option<String> {
+    let tokens = tokenize(cmd);
+    let mut result = String::with_capacity(cmd.len() + 32);
+    let mut any_changed = false;
+    let mut seg_start: usize = 0;
+
+    for tok in &tokens {
+        match tok.kind {
+            TokenKind::Operator => {
+                let seg = cmd[seg_start..tok.offset].trim();
+                let rewritten = rewrite_segment(seg, excluded).unwrap_or_else(|| seg.to_string());
+                if rewritten != seg {
+                    any_changed = true;
+                }
+                result.push_str(&rewritten);
+                if tok.value == ";" {
+                    result.push(';');
+                    let after = tok.offset + tok.value.len();
+                    if after < cmd.len() {
+                        result.push(' ');
+                    }
+                } else {
+                    result.push(' ');
+                    result.push_str(&tok.value);
+                    result.push(' ');
+                }
+                seg_start = tok.offset + tok.value.len();
+                while seg_start < cmd.len() && cmd.as_bytes().get(seg_start) == Some(&b' ') {
+                    seg_start += 1;
+                }
+            }
+            TokenKind::Pipe => {
+                let seg = cmd[seg_start..tok.offset].trim();
+                let is_pipe_incompatible = seg.starts_with("find ")
+                    || seg == "find"
+                    || seg.starts_with("fd ")
+                    || seg == "fd";
+                let rewritten = if is_pipe_incompatible {
+                    seg.to_string()
+                } else {
+                    rewrite_segment(seg, excluded).unwrap_or_else(|| seg.to_string())
+                };
+                if rewritten != seg {
+                    any_changed = true;
+                }
+                result.push_str(&rewritten);
+                result.push(' ');
+                result.push_str(cmd[tok.offset..].trim_start());
+                return if any_changed { Some(result) } else { None };
+            }
+            TokenKind::Shellism if tok.value == "&" => {
+                let seg = cmd[seg_start..tok.offset].trim();
+                let rewritten = rewrite_segment(seg, excluded).unwrap_or_else(|| seg.to_string());
+                if rewritten != seg {
+                    any_changed = true;
+                }
+                result.push_str(&rewritten);
+                result.push_str(" & ");
+                seg_start = tok.offset + tok.value.len();
+                while seg_start < cmd.len() && cmd.as_bytes().get(seg_start) == Some(&b' ') {
+                    seg_start += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let seg = cmd[seg_start..].trim();
+    let rewritten = rewrite_segment(seg, excluded).unwrap_or_else(|| seg.to_string());
+    if rewritten != seg {
+        any_changed = true;
+    }
+    result.push_str(&rewritten);
+
+    if any_changed {
+        Some(result)
+    } else {
+        None
+    }
+}
+
+fn rewrite_line_range(cmd: &str) -> Option<String> {
+    for re in [&*HEAD_N, &*HEAD_LINES] {
+        if let Some(caps) = re.captures(cmd) {
+            let n = caps.get(1)?.as_str();
+            let file = caps.get(2)?.as_str();
+            return Some(format!("tok read {} --max-lines {}", file, n));
+        }
+    }
+    if cmd.starts_with("head -") {
+        return None;
+    }
+    for re in [
+        &*TAIL_N,
+        &*TAIL_N_SPACE,
+        &*TAIL_LINES_EQ,
+        &*TAIL_LINES_SPACE,
+    ] {
+        if let Some(caps) = re.captures(cmd) {
+            let n = caps.get(1)?.as_str();
+            let file = caps.get(2)?.as_str();
+            return Some(format!("tok read {} --tail-lines {}", file, n));
+        }
+    }
+    None
+}
+
+/// Rewrite a single (non-compound) command segment.
+/// Returns `Some(rewritten)` if matched (including already-TOK pass-through).
+/// Returns `None` if no match (caller uses original segment).
+fn rewrite_segment(seg: &str, excluded: &[String]) -> Option<String> {
+    let trimmed = seg.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Strip trailing stderr/stdout redirects before matching (#530)
+    // e.g. "git status 2>&1" → match "git status", re-append " 2>&1"
+    let (cmd_part, redirect_suffix) = strip_trailing_redirects(trimmed);
+
+    // Already TOK — pass through unchanged
+    if cmd_part.starts_with("tok ") || cmd_part == "tok" {
+        return Some(trimmed.to_string());
+    }
+
+    if cmd_part.starts_with("head -") || cmd_part.starts_with("tail ") {
+        return rewrite_line_range(cmd_part).map(|r| format!("{}{}", r, redirect_suffix));
+    }
+
+    // Most cat flags (-v, -A, -e, -t, -s, -b, --show-all, etc.) have different
+    // semantics than tok read or no equivalent at all. Only `-n` (line numbers)
+    // maps correctly to `tok read -n`. Skip rewrite for any other flag.
+    if let Some(args) = cmd_part.strip_prefix("cat ") {
+        let args = args.trim_start();
+        if args.starts_with('-') && !args.starts_with("-n ") && !args.starts_with("-n\t") {
+            return None;
+        }
+    }
+
+    // Use classify_command for correct ignore/prefix handling
+    let tok_equivalent = match classify_command(cmd_part) {
+        Classification::Supported { tok_equivalent, .. } => {
+            // Check if the base command is excluded from rewriting (#243)
+            let base = cmd_part.split_whitespace().next().unwrap_or("");
+            if excluded.iter().any(|e| e == base) {
+                return None;
+            }
+            tok_equivalent
+        }
+        _ => return None,
+    };
+
+    // Find the matching rule (tok_cmd values are unique across all rules)
+    let rule = RULES.iter().find(|r| r.tok_cmd == tok_equivalent)?;
+
+    // Extract env prefix (sudo, env VAR=val, etc.)
+    let stripped_cow = ENV_PREFIX.replace(cmd_part, "");
+    let env_prefix_len = cmd_part.len() - stripped_cow.len();
+    let env_prefix = &cmd_part[..env_prefix_len];
+    let cmd_clean = stripped_cow.trim();
+
+    // #345: TOK_DISABLED=1 in env prefix → skip rewrite entirely
+    // #508: warn on stderr so agents learn to stop overusing it
+    if has_tok_disabled_prefix(cmd_part) {
+        eprintln!(
+            "[tok] TOK_DISABLED=1 detected — skipping filter for this command. \
+             Remove TOK_DISABLED=1 to restore token savings."
+        );
+        return None;
+    }
+
+    // #196: gh with --json/--jq/--template produces structured output that
+    // tok gh would corrupt — skip rewrite so the caller gets raw JSON.
+    if rule.tok_cmd == "tok gh" {
+        let args_lower = cmd_clean.to_lowercase();
+        if args_lower.contains("--json")
+            || args_lower.contains("--jq")
+            || args_lower.contains("--template")
+        {
+            return None;
+        }
+    }
+
+    // Try each rewrite prefix (longest first) with word-boundary check
+    for &prefix in rule.rewrite_prefixes {
+        if let Some(rest) = strip_word_prefix(cmd_clean, prefix) {
+            let rewritten = if rest.is_empty() {
+                format!("{}{}{}", env_prefix, rule.tok_cmd, redirect_suffix)
+            } else {
+                format!("{}{} {}{}", env_prefix, rule.tok_cmd, rest, redirect_suffix)
+            };
+            return Some(rewritten);
+        }
+    }
+
+    None
+}
+
+/// Strip a command prefix with word-boundary check.
+/// Returns the remainder of the command after the prefix, or `None` if no match.
+fn strip_word_prefix<'a>(cmd: &'a str, prefix: &str) -> Option<&'a str> {
+    if cmd == prefix {
+        Some("")
+    } else if cmd.len() > prefix.len()
+        && cmd.starts_with(prefix)
+        && cmd.as_bytes()[prefix.len()] == b' '
+    {
+        Some(cmd[prefix.len() + 1..].trim_start())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::report::TokStatus;
+    use super::*;
+
+    #[test]
+    fn test_classify_git_status() {
+        assert_eq!(
+            classify_command("git status"),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_git_diff_cached() {
+        assert_eq!(
+            classify_command("git diff --cached"),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 80.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_cargo_test_filter() {
+        assert_eq!(
+            classify_command("cargo test filter::"),
+            Classification::Supported {
+                tok_equivalent: "tok cargo",
+                category: "Cargo",
+                estimated_savings_pct: 90.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_npx_tsc() {
+        assert_eq!(
+            classify_command("npx tsc --noEmit"),
+            Classification::Supported {
+                tok_equivalent: "tok tsc",
+                category: "Build",
+                estimated_savings_pct: 83.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_cat_file() {
+        assert_eq!(
+            classify_command("cat src/main.rs"),
+            Classification::Supported {
+                tok_equivalent: "tok read",
+                category: "Files",
+                estimated_savings_pct: 60.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_cat_redirect_not_supported() {
+        // cat > file and cat >> file are writes, not reads — should not be classified as supported
+        let write_commands = [
+            "cat > /tmp/output.txt",
+            "cat >> /tmp/output.txt",
+            "cat file.txt > output.txt",
+            "cat -n file.txt >> log.txt",
+            "head -10 README.md > output.txt",
+            "tail -f app.log > /dev/null",
+        ];
+        for cmd in &write_commands {
+            if let Classification::Supported { .. } = classify_command(cmd) {
+                panic!("{} should NOT be classified as Supported", cmd)
+            }
+            // Unsupported or Ignored is fine
+        }
+    }
+
+    #[test]
+    fn test_classify_cd_ignored() {
+        assert_eq!(classify_command("cd /tmp"), Classification::Ignored);
+    }
+
+    #[test]
+    fn test_classify_tok_already() {
+        assert_eq!(classify_command("tok git status"), Classification::Ignored);
+    }
+
+    #[test]
+    fn test_classify_echo_ignored() {
+        assert_eq!(
+            classify_command("echo hello world"),
+            Classification::Ignored
+        );
+    }
+
+    #[test]
+    fn test_classify_htop_unsupported() {
+        match classify_command("htop -d 10") {
+            Classification::Unsupported { base_command } => {
+                assert_eq!(base_command, "htop");
+            }
+            other => panic!("expected Unsupported, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_classify_env_prefix_stripped() {
+        assert_eq!(
+            classify_command("GIT_SSH_COMMAND=ssh git push"),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_sudo_stripped() {
+        assert_eq!(
+            classify_command("sudo docker ps"),
+            Classification::Supported {
+                tok_equivalent: "tok docker",
+                category: "Infra",
+                estimated_savings_pct: 85.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_cargo_check() {
+        assert_eq!(
+            classify_command("cargo check"),
+            Classification::Supported {
+                tok_equivalent: "tok cargo",
+                category: "Cargo",
+                estimated_savings_pct: 80.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_cargo_check_all_targets() {
+        assert_eq!(
+            classify_command("cargo check --all-targets"),
+            Classification::Supported {
+                tok_equivalent: "tok cargo",
+                category: "Cargo",
+                estimated_savings_pct: 80.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_cargo_fmt_passthrough() {
+        assert_eq!(
+            classify_command("cargo fmt"),
+            Classification::Supported {
+                tok_equivalent: "tok cargo",
+                category: "Cargo",
+                estimated_savings_pct: 80.0,
+                status: TokStatus::Passthrough,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_cargo_clippy_savings() {
+        assert_eq!(
+            classify_command("cargo clippy --all-targets"),
+            Classification::Supported {
+                tok_equivalent: "tok cargo",
+                category: "Cargo",
+                estimated_savings_pct: 80.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_registry_covers_all_cargo_subcommands() {
+        // Verify that every CargoCommand variant (Build, Test, Clippy, Check, Fmt)
+        // except Other has a matching pattern in the registry
+        for subcmd in ["build", "test", "clippy", "check", "fmt"] {
+            let cmd = format!("cargo {subcmd}");
+            match classify_command(&cmd) {
+                Classification::Supported { .. } => {}
+                other => panic!("cargo {subcmd} should be Supported, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_registry_covers_all_git_subcommands() {
+        // Verify that every GitCommand subcommand has a matching pattern
+        for subcmd in [
+            "status", "log", "diff", "show", "add", "commit", "push", "pull", "branch", "fetch",
+            "stash", "worktree",
+        ] {
+            let cmd = format!("git {subcmd}");
+            match classify_command(&cmd) {
+                Classification::Supported { .. } => {}
+                other => panic!("git {subcmd} should be Supported, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_classify_find_not_blocked_by_fi() {
+        // Regression: "fi" in IGNORED_PREFIXES used to shadow "find" commands
+        // because "find".starts_with("fi") is true. "fi" should only match exactly.
+        assert_eq!(
+            classify_command("find . -name foo"),
+            Classification::Supported {
+                tok_equivalent: "tok find",
+                category: "Files",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_fi_still_ignored_exact() {
+        // Bare "fi" (shell keyword) should still be ignored
+        assert_eq!(classify_command("fi"), Classification::Ignored);
+    }
+
+    #[test]
+    fn test_done_still_ignored_exact() {
+        // Bare "done" (shell keyword) should still be ignored
+        assert_eq!(classify_command("done"), Classification::Ignored);
+    }
+
+    #[test]
+    fn test_split_chain_and() {
+        assert_eq!(split_command_chain("a && b"), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_split_chain_semicolon() {
+        assert_eq!(split_command_chain("a ; b"), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_split_pipe_first_only() {
+        assert_eq!(split_command_chain("a | b"), vec!["a"]);
+    }
+
+    #[test]
+    fn test_split_single() {
+        assert_eq!(split_command_chain("git status"), vec!["git status"]);
+    }
+
+    #[test]
+    fn test_split_quoted_and() {
+        assert_eq!(
+            split_command_chain(r#"echo "a && b""#),
+            vec![r#"echo "a && b""#]
+        );
+    }
+
+    #[test]
+    fn test_split_heredoc_no_split() {
+        let cmd = "cat <<'EOF'\nhello && world\nEOF";
+        assert_eq!(split_command_chain(cmd), vec![cmd]);
+    }
+
+    #[test]
+    fn test_classify_mypy() {
+        assert_eq!(
+            classify_command("mypy src/"),
+            Classification::Supported {
+                tok_equivalent: "tok mypy",
+                category: "Build",
+                estimated_savings_pct: 80.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_python_m_mypy() {
+        assert_eq!(
+            classify_command("python3 -m mypy --strict"),
+            Classification::Supported {
+                tok_equivalent: "tok mypy",
+                category: "Build",
+                estimated_savings_pct: 80.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    // --- rewrite_command tests ---
+
+    #[test]
+    fn test_rewrite_git_status() {
+        assert_eq!(
+            rewrite_command("git status", &[]),
+            Some("tok git status".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_git_log() {
+        assert_eq!(
+            rewrite_command("git log -10", &[]),
+            Some("tok git log -10".into())
+        );
+    }
+
+    // --- git -C <path> support (#555) ---
+
+    #[test]
+    fn test_rewrite_git_dash_c_status() {
+        assert_eq!(
+            rewrite_command("git -C /path/to/repo status", &[]),
+            Some("tok git -C /path/to/repo status".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_git_dash_c_log() {
+        assert_eq!(
+            rewrite_command("git -C /tmp/myrepo log --oneline -5", &[]),
+            Some("tok git -C /tmp/myrepo log --oneline -5".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_git_dash_c_diff() {
+        assert_eq!(
+            rewrite_command("git -C /home/user/project diff --name-only", &[]),
+            Some("tok git -C /home/user/project diff --name-only".into())
+        );
+    }
+
+    #[test]
+    fn test_classify_git_dash_c() {
+        let result = classify_command("git -C /tmp status");
+        assert!(
+            matches!(
+                result,
+                Classification::Supported {
+                    tok_equivalent: "tok git",
+                    ..
+                }
+            ),
+            "git -C should be classified as supported, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_rewrite_cargo_test() {
+        assert_eq!(
+            rewrite_command("cargo test", &[]),
+            Some("tok cargo test".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_compound_and() {
+        assert_eq!(
+            rewrite_command("git add . && cargo test", &[]),
+            Some("tok git add . && tok cargo test".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_compound_three_segments() {
+        assert_eq!(
+            rewrite_command(
+                "cargo fmt --all && cargo clippy --all-targets && cargo test",
+                &[]
+            ),
+            Some("tok cargo fmt --all && tok cargo clippy --all-targets && tok cargo test".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_already_tok() {
+        assert_eq!(
+            rewrite_command("tok git status", &[]),
+            Some("tok git status".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_background_single_amp() {
+        assert_eq!(
+            rewrite_command("cargo test & git status", &[]),
+            Some("tok cargo test & tok git status".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_background_unsupported_right() {
+        assert_eq!(
+            rewrite_command("cargo test & htop", &[]),
+            Some("tok cargo test & htop".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_background_does_not_affect_double_amp() {
+        // `&&` must still work after adding `&` support
+        assert_eq!(
+            rewrite_command("cargo test && git status", &[]),
+            Some("tok cargo test && tok git status".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_unsupported_returns_none() {
+        assert_eq!(rewrite_command("htop", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_ignored_cd() {
+        assert_eq!(rewrite_command("cd /tmp", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_with_env_prefix() {
+        assert_eq!(
+            rewrite_command("GIT_SSH_COMMAND=ssh git push", &[]),
+            Some("GIT_SSH_COMMAND=ssh tok git push".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_npx_tsc() {
+        assert_eq!(
+            rewrite_command("npx tsc --noEmit", &[]),
+            Some("tok tsc --noEmit".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_pnpm_tsc() {
+        assert_eq!(
+            rewrite_command("pnpm tsc --noEmit", &[]),
+            Some("tok tsc --noEmit".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_cat_file() {
+        assert_eq!(
+            rewrite_command("cat src/main.rs", &[]),
+            Some("tok read src/main.rs".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_cat_with_incompatible_flags_skipped() {
+        // cat flags with different semantics than tok read — skip rewrite
+        assert_eq!(rewrite_command("cat -A file.cpp", &[]), None);
+        assert_eq!(rewrite_command("cat -v file.txt", &[]), None);
+        assert_eq!(rewrite_command("cat -e file.txt", &[]), None);
+        assert_eq!(rewrite_command("cat -t file.txt", &[]), None);
+        assert_eq!(rewrite_command("cat -s file.txt", &[]), None);
+        assert_eq!(rewrite_command("cat --show-all file.txt", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_cat_with_compatible_flags() {
+        // cat -n (line numbers) maps to tok read -n — allow rewrite
+        assert_eq!(
+            rewrite_command("cat -n file.txt", &[]),
+            Some("tok read -n file.txt".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_rg_pattern() {
+        assert_eq!(
+            rewrite_command("rg \"fn main\"", &[]),
+            Some("tok grep \"fn main\"".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_npx_playwright() {
+        assert_eq!(
+            rewrite_command("npx playwright test", &[]),
+            Some("tok playwright test".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_next_build() {
+        assert_eq!(
+            rewrite_command("next build --turbo", &[]),
+            Some("tok next --turbo".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_pipe_first_only() {
+        // After a pipe, the filter command stays raw
+        assert_eq!(
+            rewrite_command("git log -10 | grep feat", &[]),
+            Some("tok git log -10 | grep feat".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_find_pipe_skipped() {
+        // find in a pipe should NOT be rewritten — tok find output format
+        // is incompatible with pipe consumers like xargs (#439)
+        assert_eq!(
+            rewrite_command("find . -name '*.rs' | xargs grep 'fn run'", &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rewrite_find_pipe_xargs_wc() {
+        assert_eq!(rewrite_command("find src -type f | wc -l", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_find_no_pipe_still_rewritten() {
+        // find WITHOUT a pipe should still be rewritten
+        assert_eq!(
+            rewrite_command("find . -name '*.rs'", &[]),
+            Some("tok find . -name '*.rs'".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_heredoc_returns_none() {
+        assert_eq!(rewrite_command("cat <<'EOF'\nfoo\nEOF", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_empty_returns_none() {
+        assert_eq!(rewrite_command("", &[]), None);
+        assert_eq!(rewrite_command("   ", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_mixed_compound_partial() {
+        // First segment already TOK, second gets rewritten
+        assert_eq!(
+            rewrite_command("tok git add . && cargo test", &[]),
+            Some("tok git add . && tok cargo test".into())
+        );
+    }
+
+    // --- #345: TOK_DISABLED ---
+
+    #[test]
+    fn test_rewrite_tok_disabled_curl() {
+        assert_eq!(
+            rewrite_command("TOK_DISABLED=1 curl https://example.com", &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tok_disabled_git_status() {
+        assert_eq!(rewrite_command("TOK_DISABLED=1 git status", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_tok_disabled_multi_env() {
+        assert_eq!(
+            rewrite_command("FOO=1 TOK_DISABLED=1 git status", &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tok_disabled_subprocess_warns() {
+        let tok_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("debug")
+            .join("tok");
+        if !tok_bin.exists() {
+            return;
+        }
+        let tok_mtime = std::fs::metadata(&tok_bin)
+            .ok()
+            .and_then(|m| m.modified().ok());
+        let test_mtime = std::env::current_exe()
+            .ok()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok());
+        if let (Some(tok_t), Some(test_t)) = (tok_mtime, test_mtime) {
+            if tok_t < test_t {
+                return;
+            }
+        }
+
+        let output = std::process::Command::new(&tok_bin)
+            .args(["rewrite", "TOK_DISABLED=1 git status"])
+            .output()
+            .expect("Failed to run tok");
+
+        assert!(
+            !output.status.success(),
+            "Should exit non-zero (no rewrite)"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("TOK_DISABLED=1") && stderr.contains("skipping"),
+            "Should warn on stderr, got: {}",
+            stderr
+        );
+    }
+
+    #[test]
+    fn test_rewrite_non_tok_disabled_env_still_rewrites() {
+        assert_eq!(
+            rewrite_command("SOME_VAR=1 git status", &[]),
+            Some("SOME_VAR=1 tok git status".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_env_quoted_value_with_spaces() {
+        assert_eq!(
+            rewrite_command(
+                r#"GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git push"#,
+                &[]
+            ),
+            Some(r#"GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" tok git push"#.into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_env_single_quoted_value_with_spaces() {
+        assert_eq!(
+            rewrite_command("EDITOR='vim -u NONE' git commit", &[]),
+            Some("EDITOR='vim -u NONE' tok git commit".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_env_quoted_plus_unquoted() {
+        assert_eq!(
+            rewrite_command(r#"FOO="bar baz" BAR=1 git status"#, &[]),
+            Some(r#"FOO="bar baz" BAR=1 tok git status"#.into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_env_escaped_quotes_in_value() {
+        assert_eq!(
+            rewrite_command(r#"FOO="he said \"hello\"" git status"#, &[]),
+            Some(r#"FOO="he said \"hello\"" tok git status"#.into())
+        );
+    }
+
+    #[test]
+    fn test_classify_env_quoted_value_stripped() {
+        assert_eq!(
+            classify_command(r#"GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git push"#),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    // --- #346: 2>&1 and &> redirect detection ---
+
+    #[test]
+    fn test_rewrite_redirect_2_gt_amp_1_with_pipe() {
+        assert_eq!(
+            rewrite_command("cargo test 2>&1 | head", &[]),
+            Some("tok cargo test 2>&1 | head".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_redirect_2_gt_amp_1_trailing() {
+        assert_eq!(
+            rewrite_command("cargo test 2>&1", &[]),
+            Some("tok cargo test 2>&1".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_redirect_plain_2_devnull() {
+        // 2>/dev/null has no `&`, never broken — non-regression
+        assert_eq!(
+            rewrite_command("git status 2>/dev/null", &[]),
+            Some("tok git status 2>/dev/null".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_redirect_2_gt_amp_1_with_and() {
+        assert_eq!(
+            rewrite_command("cargo test 2>&1 && echo done", &[]),
+            Some("tok cargo test 2>&1 && echo done".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_redirect_amp_gt_devnull() {
+        assert_eq!(
+            rewrite_command("cargo test &>/dev/null", &[]),
+            Some("tok cargo test &>/dev/null".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_redirect_double() {
+        // Double redirect: only last one stripped, but full command rewrites correctly
+        assert_eq!(
+            rewrite_command("git status 2>&1 >/dev/null", &[]),
+            Some("tok git status 2>&1 >/dev/null".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_redirect_fd_close() {
+        // 2>&- (close stderr fd)
+        assert_eq!(
+            rewrite_command("git status 2>&-", &[]),
+            Some("tok git status 2>&-".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_redirect_quotes_not_stripped() {
+        // Redirect-like chars inside quotes should NOT be stripped
+        // Known limitation: apostrophes cause conservative no-strip (safe fallback)
+        let result = rewrite_command("git commit -m \"it's fixed\" 2>&1", &[]);
+        assert!(
+            result.is_some(),
+            "Should still rewrite even with apostrophe"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_background_amp_non_regression() {
+        // background `&` must still work after redirect fix
+        assert_eq!(
+            rewrite_command("cargo test & git status", &[]),
+            Some("tok cargo test & tok git status".into())
+        );
+    }
+
+    // --- P0.2: head -N rewrite ---
+
+    #[test]
+    fn test_rewrite_head_numeric_flag() {
+        // head -20 file → tok read file --max-lines 20 (not tok read -20 file)
+        assert_eq!(
+            rewrite_command("head -20 src/main.rs", &[]),
+            Some("tok read src/main.rs --max-lines 20".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_head_lines_long_flag() {
+        assert_eq!(
+            rewrite_command("head --lines=50 src/lib.rs", &[]),
+            Some("tok read src/lib.rs --max-lines 50".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_head_no_flag_still_rewrites() {
+        // plain `head file` → `tok read file` (no numeric flag)
+        assert_eq!(
+            rewrite_command("head src/main.rs", &[]),
+            Some("tok read src/main.rs".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_head_other_flag_skipped() {
+        // head -c 100 file: unsupported flag, skip rewriting
+        assert_eq!(rewrite_command("head -c 100 src/main.rs", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_tail_numeric_flag() {
+        assert_eq!(
+            rewrite_command("tail -20 src/main.rs", &[]),
+            Some("tok read src/main.rs --tail-lines 20".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tail_n_space_flag() {
+        assert_eq!(
+            rewrite_command("tail -n 12 src/lib.rs", &[]),
+            Some("tok read src/lib.rs --tail-lines 12".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tail_lines_long_flag() {
+        assert_eq!(
+            rewrite_command("tail --lines=7 src/lib.rs", &[]),
+            Some("tok read src/lib.rs --tail-lines 7".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tail_lines_space_flag() {
+        assert_eq!(
+            rewrite_command("tail --lines 7 src/lib.rs", &[]),
+            Some("tok read src/lib.rs --tail-lines 7".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tail_other_flag_skipped() {
+        assert_eq!(rewrite_command("tail -c 100 src/main.rs", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_tail_plain_file_skipped() {
+        assert_eq!(rewrite_command("tail src/main.rs", &[]), None);
+    }
+
+    // --- New registry entries ---
+
+    #[test]
+    fn test_classify_gh_release() {
+        assert!(matches!(
+            classify_command("gh release list"),
+            Classification::Supported {
+                tok_equivalent: "tok gh",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_cargo_install() {
+        assert!(matches!(
+            classify_command("cargo install tok"),
+            Classification::Supported {
+                tok_equivalent: "tok cargo",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_docker_run() {
+        assert!(matches!(
+            classify_command("docker run --rm ubuntu bash"),
+            Classification::Supported {
+                tok_equivalent: "tok docker",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_docker_exec() {
+        assert!(matches!(
+            classify_command("docker exec -it mycontainer bash"),
+            Classification::Supported {
+                tok_equivalent: "tok docker",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_docker_build() {
+        assert!(matches!(
+            classify_command("docker build -t myimage ."),
+            Classification::Supported {
+                tok_equivalent: "tok docker",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_kubectl_describe() {
+        assert!(matches!(
+            classify_command("kubectl describe pod mypod"),
+            Classification::Supported {
+                tok_equivalent: "tok kubectl",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_kubectl_apply() {
+        assert!(matches!(
+            classify_command("kubectl apply -f deploy.yaml"),
+            Classification::Supported {
+                tok_equivalent: "tok kubectl",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_tree() {
+        assert!(matches!(
+            classify_command("tree src/"),
+            Classification::Supported {
+                tok_equivalent: "tok tree",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_diff() {
+        assert!(matches!(
+            classify_command("diff file1.txt file2.txt"),
+            Classification::Supported {
+                tok_equivalent: "tok diff",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_tree() {
+        assert_eq!(
+            rewrite_command("tree src/", &[]),
+            Some("tok tree src/".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_diff() {
+        assert_eq!(
+            rewrite_command("diff file1.txt file2.txt", &[]),
+            Some("tok diff file1.txt file2.txt".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_gh_release() {
+        assert_eq!(
+            rewrite_command("gh release list", &[]),
+            Some("tok gh release list".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_cargo_install() {
+        assert_eq!(
+            rewrite_command("cargo install tok", &[]),
+            Some("tok cargo install tok".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_kubectl_describe() {
+        assert_eq!(
+            rewrite_command("kubectl describe pod mypod", &[]),
+            Some("tok kubectl describe pod mypod".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_docker_run() {
+        assert_eq!(
+            rewrite_command("docker run --rm ubuntu bash", &[]),
+            Some("tok docker run --rm ubuntu bash".into())
+        );
+    }
+
+    #[test]
+    fn test_classify_swift_test() {
+        assert!(matches!(
+            classify_command("swift test"),
+            Classification::Supported {
+                tok_equivalent: "tok swift",
+                category: "Build",
+                estimated_savings_pct: 90.0,
+                status: TokStatus::Existing,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_swift_test() {
+        assert_eq!(
+            rewrite_command("swift test --parallel", &[]),
+            Some("tok swift test --parallel".into())
+        );
+    }
+
+    // --- #336: docker compose supported subcommands rewritten, unsupported skipped ---
+
+    #[test]
+    fn test_rewrite_docker_compose_ps() {
+        assert_eq!(
+            rewrite_command("docker compose ps", &[]),
+            Some("tok docker compose ps".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_docker_compose_logs() {
+        assert_eq!(
+            rewrite_command("docker compose logs web", &[]),
+            Some("tok docker compose logs web".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_docker_compose_build() {
+        assert_eq!(
+            rewrite_command("docker compose build", &[]),
+            Some("tok docker compose build".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_docker_compose_up_skipped() {
+        assert_eq!(rewrite_command("docker compose up -d", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_docker_compose_down_skipped() {
+        assert_eq!(rewrite_command("docker compose down", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_docker_compose_config_skipped() {
+        assert_eq!(
+            rewrite_command("docker compose -f foo.yaml config --services", &[]),
+            None
+        );
+    }
+
+    // --- AWS / psql (PR #216) ---
+
+    #[test]
+    fn test_classify_aws() {
+        assert!(matches!(
+            classify_command("aws s3 ls"),
+            Classification::Supported {
+                tok_equivalent: "tok aws",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_aws_ec2() {
+        assert!(matches!(
+            classify_command("aws ec2 describe-instances"),
+            Classification::Supported {
+                tok_equivalent: "tok aws",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_psql() {
+        assert!(matches!(
+            classify_command("psql -U postgres"),
+            Classification::Supported {
+                tok_equivalent: "tok psql",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_psql_url() {
+        assert!(matches!(
+            classify_command("psql postgres://localhost/mydb"),
+            Classification::Supported {
+                tok_equivalent: "tok psql",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_aws() {
+        assert_eq!(
+            rewrite_command("aws s3 ls", &[]),
+            Some("tok aws s3 ls".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_aws_ec2() {
+        assert_eq!(
+            rewrite_command("aws ec2 describe-instances --region us-east-1", &[]),
+            Some("tok aws ec2 describe-instances --region us-east-1".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_psql() {
+        assert_eq!(
+            rewrite_command("psql -U postgres -d mydb", &[]),
+            Some("tok psql -U postgres -d mydb".into())
+        );
+    }
+
+    // --- Python tooling ---
+
+    #[test]
+    fn test_classify_ruff_check() {
+        assert!(matches!(
+            classify_command("ruff check ."),
+            Classification::Supported {
+                tok_equivalent: "tok ruff",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_ruff_format() {
+        assert!(matches!(
+            classify_command("ruff format src/"),
+            Classification::Supported {
+                tok_equivalent: "tok ruff",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_pytest() {
+        assert!(matches!(
+            classify_command("pytest tests/"),
+            Classification::Supported {
+                tok_equivalent: "tok pytest",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_python_m_pytest() {
+        assert!(matches!(
+            classify_command("python -m pytest tests/"),
+            Classification::Supported {
+                tok_equivalent: "tok pytest",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_pip_list() {
+        assert!(matches!(
+            classify_command("pip list"),
+            Classification::Supported {
+                tok_equivalent: "tok pip",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_uv_pip_list() {
+        assert!(matches!(
+            classify_command("uv pip list"),
+            Classification::Supported {
+                tok_equivalent: "tok pip",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_ruff_check() {
+        assert_eq!(
+            rewrite_command("ruff check .", &[]),
+            Some("tok ruff check .".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_ruff_format() {
+        assert_eq!(
+            rewrite_command("ruff format src/", &[]),
+            Some("tok ruff format src/".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_pytest() {
+        assert_eq!(
+            rewrite_command("pytest tests/", &[]),
+            Some("tok pytest tests/".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_python_m_pytest() {
+        assert_eq!(
+            rewrite_command("python -m pytest -x tests/", &[]),
+            Some("tok pytest -x tests/".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_pip_list() {
+        assert_eq!(
+            rewrite_command("pip list", &[]),
+            Some("tok pip list".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_pip_outdated() {
+        assert_eq!(
+            rewrite_command("pip outdated", &[]),
+            Some("tok pip outdated".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_uv_pip_list() {
+        assert_eq!(
+            rewrite_command("uv pip list", &[]),
+            Some("tok pip list".into())
+        );
+    }
+
+    // --- Go tooling ---
+
+    #[test]
+    fn test_classify_go_test() {
+        assert!(matches!(
+            classify_command("go test ./..."),
+            Classification::Supported {
+                tok_equivalent: "tok go",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_go_build() {
+        assert!(matches!(
+            classify_command("go build ./..."),
+            Classification::Supported {
+                tok_equivalent: "tok go",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_go_vet() {
+        assert!(matches!(
+            classify_command("go vet ./..."),
+            Classification::Supported {
+                tok_equivalent: "tok go",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_classify_golangci_lint() {
+        assert!(matches!(
+            classify_command("golangci-lint run"),
+            Classification::Supported {
+                tok_equivalent: "tok golangci-lint",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_go_test() {
+        assert_eq!(
+            rewrite_command("go test ./...", &[]),
+            Some("tok go test ./...".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_go_build() {
+        assert_eq!(
+            rewrite_command("go build ./...", &[]),
+            Some("tok go build ./...".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_go_vet() {
+        assert_eq!(
+            rewrite_command("go vet ./...", &[]),
+            Some("tok go vet ./...".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_golangci_lint() {
+        assert_eq!(
+            rewrite_command("golangci-lint run ./...", &[]),
+            Some("tok golangci-lint run ./...".into())
+        );
+    }
+
+    // --- JS/TS tooling ---
+
+    #[test]
+    fn test_classify_vitest() {
+        assert!(matches!(
+            classify_command("vitest run"),
+            Classification::Supported {
+                tok_equivalent: "tok vitest",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_vitest() {
+        assert_eq!(
+            rewrite_command("vitest run", &[]),
+            Some("tok vitest run".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_pnpm_vitest() {
+        assert_eq!(
+            rewrite_command("pnpm vitest run", &[]),
+            Some("tok vitest run".into())
+        );
+    }
+
+    #[test]
+    fn test_classify_prisma() {
+        assert!(matches!(
+            classify_command("npx prisma migrate dev"),
+            Classification::Supported {
+                tok_equivalent: "tok prisma",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_prisma() {
+        assert_eq!(
+            rewrite_command("npx prisma migrate dev", &[]),
+            Some("tok prisma migrate dev".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_prettier() {
+        assert_eq!(
+            rewrite_command("npx prettier --check src/", &[]),
+            Some("tok prettier --check src/".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_pnpm_list() {
+        assert_eq!(
+            rewrite_command("pnpm list", &[]),
+            Some("tok pnpm list".into())
+        );
+    }
+
+    // --- Compound operator edge cases ---
+
+    #[test]
+    fn test_rewrite_compound_or() {
+        // `||` fallback: left rewritten, right rewritten
+        assert_eq!(
+            rewrite_command("cargo test || cargo build", &[]),
+            Some("tok cargo test || tok cargo build".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_compound_semicolon() {
+        assert_eq!(
+            rewrite_command("git status; cargo test", &[]),
+            Some("tok git status; tok cargo test".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_compound_pipe_raw_filter() {
+        // Pipe: rewrite first segment only, pass through rest unchanged
+        assert_eq!(
+            rewrite_command("cargo test | grep FAILED", &[]),
+            Some("tok cargo test | grep FAILED".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_compound_pipe_git_grep() {
+        assert_eq!(
+            rewrite_command("git log -10 | grep feat", &[]),
+            Some("tok git log -10 | grep feat".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_compound_four_segments() {
+        assert_eq!(
+            rewrite_command(
+                "cargo fmt --all && cargo clippy && cargo test && git status",
+                &[]
+            ),
+            Some(
+                "tok cargo fmt --all && tok cargo clippy && tok cargo test && tok git status"
+                    .into()
+            )
+        );
+    }
+
+    #[test]
+    fn test_rewrite_compound_mixed_supported_unsupported() {
+        // unsupported segments stay raw
+        assert_eq!(
+            rewrite_command("cargo test && htop", &[]),
+            Some("tok cargo test && htop".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_compound_all_unsupported_returns_none() {
+        // No rewrite at all: returns None
+        assert_eq!(rewrite_command("htop && top", &[]), None);
+    }
+
+    // --- sudo / env prefix + rewrite ---
+
+    #[test]
+    fn test_rewrite_sudo_docker() {
+        assert_eq!(
+            rewrite_command("sudo docker ps", &[]),
+            Some("sudo tok docker ps".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_env_var_prefix() {
+        assert_eq!(
+            rewrite_command("GIT_SSH_COMMAND=ssh git push origin main", &[]),
+            Some("GIT_SSH_COMMAND=ssh tok git push origin main".into())
+        );
+    }
+
+    // --- find with native flags ---
+
+    #[test]
+    fn test_rewrite_find_with_flags() {
+        assert_eq!(
+            rewrite_command("find . -name '*.rs' -type f", &[]),
+            Some("tok find . -name '*.rs' -type f".into())
+        );
+    }
+
+    #[test]
+    fn test_all_rules_are_complete() {
+        for rule in RULES {
+            assert!(
+                !rule.pattern.is_empty(),
+                "Rule '{}' has empty pattern",
+                rule.tok_cmd
+            );
+            assert!(!rule.tok_cmd.is_empty(), "Rule with empty tok_cmd found");
+            assert!(
+                rule.tok_cmd.starts_with("tok "),
+                "tok_cmd '{}' must start with 'tok '",
+                rule.tok_cmd
+            );
+            assert!(
+                !rule.rewrite_prefixes.is_empty(),
+                "Rule '{}' has no rewrite_prefixes",
+                rule.tok_cmd
+            );
+        }
+    }
+
+    // --- exclude_commands (#243) ---
+
+    #[test]
+    fn test_rewrite_excludes_curl() {
+        let excluded = vec!["curl".to_string()];
+        assert_eq!(
+            rewrite_command("curl https://api.example.com/health", &excluded),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rewrite_exclude_does_not_affect_other_commands() {
+        let excluded = vec!["curl".to_string()];
+        assert_eq!(
+            rewrite_command("git status", &excluded),
+            Some("tok git status".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_empty_excludes_rewrites_curl() {
+        let excluded: Vec<String> = vec![];
+        assert!(rewrite_command("curl https://api.example.com", &excluded).is_some());
+    }
+
+    #[test]
+    fn test_rewrite_compound_partial_exclude() {
+        // curl excluded but git still rewrites
+        let excluded = vec!["curl".to_string()];
+        assert_eq!(
+            rewrite_command("git status && curl https://api.example.com", &excluded),
+            Some("tok git status && curl https://api.example.com".into())
+        );
+    }
+
+    #[test]
+    fn test_all_patterns_are_valid_regex() {
+        use regex::Regex;
+        for (i, rule) in RULES.iter().enumerate() {
+            assert!(
+                Regex::new(rule.pattern).is_ok(),
+                "RULES[{i}] ({}) has invalid pattern '{}'",
+                rule.tok_cmd,
+                rule.pattern
+            );
+        }
+    }
+
+    // --- #196: gh --json/--jq/--template passthrough ---
+
+    #[test]
+    fn test_rewrite_gh_json_skipped() {
+        assert_eq!(rewrite_command("gh pr list --json number,title", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_gh_jq_skipped() {
+        assert_eq!(
+            rewrite_command("gh pr list --json number --jq '.[].number'", &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rewrite_gh_template_skipped() {
+        assert_eq!(
+            rewrite_command("gh pr view 42 --template '{{.title}}'", &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rewrite_gh_api_json_skipped() {
+        assert_eq!(
+            rewrite_command("gh api repos/owner/repo --jq '.name'", &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rewrite_gh_without_json_still_works() {
+        assert_eq!(
+            rewrite_command("gh pr list", &[]),
+            Some("tok gh pr list".into())
+        );
+    }
+
+    // --- #508: TOK_DISABLED detection helpers ---
+
+    #[test]
+    fn test_has_tok_disabled_prefix() {
+        assert!(has_tok_disabled_prefix("TOK_DISABLED=1 git status"));
+        assert!(has_tok_disabled_prefix("FOO=1 TOK_DISABLED=1 cargo test"));
+        assert!(has_tok_disabled_prefix(
+            "TOK_DISABLED=true git log --oneline"
+        ));
+        assert!(!has_tok_disabled_prefix("git status"));
+        assert!(!has_tok_disabled_prefix("tok git status"));
+        assert!(!has_tok_disabled_prefix("SOME_VAR=1 git status"));
+    }
+
+    #[test]
+    fn test_strip_disabled_prefix() {
+        assert_eq!(
+            strip_disabled_prefix("TOK_DISABLED=1 git status"),
+            "git status"
+        );
+        assert_eq!(
+            strip_disabled_prefix("FOO=1 TOK_DISABLED=1 cargo test"),
+            "cargo test"
+        );
+        assert_eq!(strip_disabled_prefix("git status"), "git status");
+    }
+
+    // --- #485: absolute path normalization ---
+
+    #[test]
+    fn test_classify_absolute_path_grep() {
+        assert_eq!(
+            classify_command("/usr/bin/grep -rni pattern"),
+            Classification::Supported {
+                tok_equivalent: "tok grep",
+                category: "Files",
+                estimated_savings_pct: 75.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_absolute_path_ls() {
+        assert_eq!(
+            classify_command("/bin/ls -la"),
+            Classification::Supported {
+                tok_equivalent: "tok ls",
+                category: "Files",
+                estimated_savings_pct: 65.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_absolute_path_git() {
+        assert_eq!(
+            classify_command("/usr/local/bin/git status"),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_absolute_path_no_args() {
+        // /usr/bin/find alone → still classified
+        assert_eq!(
+            classify_command("/usr/bin/find ."),
+            Classification::Supported {
+                tok_equivalent: "tok find",
+                category: "Files",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_strip_absolute_path_helper() {
+        assert_eq!(strip_absolute_path("/usr/bin/grep -rn foo"), "grep -rn foo");
+        assert_eq!(strip_absolute_path("/bin/ls -la"), "ls -la");
+        assert_eq!(strip_absolute_path("grep -rn foo"), "grep -rn foo");
+        assert_eq!(strip_absolute_path("/usr/local/bin/git"), "git");
+    }
+
+    // --- #163: git global options ---
+
+    #[test]
+    fn test_classify_git_with_dash_c_path() {
+        assert_eq!(
+            classify_command("git -C /tmp status"),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_git_no_pager_log() {
+        assert_eq!(
+            classify_command("git --no-pager log -5"),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_git_git_dir() {
+        assert_eq!(
+            classify_command("git --git-dir /tmp/.git status"),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_rewrite_git_dash_c() {
+        assert_eq!(
+            rewrite_command("git -C /tmp status", &[]),
+            Some("tok git -C /tmp status".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_git_no_pager() {
+        assert_eq!(
+            rewrite_command("git --no-pager log -5", &[]),
+            Some("tok git --no-pager log -5".to_string())
+        );
+    }
+
+    #[test]
+    fn test_strip_git_global_opts_helper() {
+        assert_eq!(strip_git_global_opts("git -C /tmp status"), "git status");
+        assert_eq!(strip_git_global_opts("git --no-pager log"), "git log");
+        assert_eq!(strip_git_global_opts("git status"), "git status");
+        assert_eq!(strip_git_global_opts("cargo test"), "cargo test");
+    }
+
+    // --- #wc: wc filter was silently ignored by the hook ---
+
+    #[test]
+    fn test_classify_wc_supported() {
+        // BUG: "wc " was in IGNORED_PREFIXES despite wc_cmd.rs having a full filter.
+        // This test documents the bug: it must FAIL before the fix and PASS after.
+        assert_eq!(
+            classify_command("wc -l src/main.rs"),
+            Classification::Supported {
+                tok_equivalent: "tok wc",
+                category: "Files",
+                estimated_savings_pct: 60.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_wc_multi_file() {
+        assert_eq!(
+            classify_command("wc src/*.rs"),
+            Classification::Supported {
+                tok_equivalent: "tok wc",
+                category: "Files",
+                estimated_savings_pct: 60.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_rewrite_wc() {
+        assert_eq!(
+            rewrite_command("wc -l src/main.rs", &[]),
+            Some("tok wc -l src/main.rs".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_wc_multi_file() {
+        assert_eq!(
+            rewrite_command("wc src/*.rs", &[]),
+            Some("tok wc src/*.rs".into())
+        );
+    }
+
+    #[test]
+    fn test_classify_command_substitution_passthrough() {
+        assert_eq!(
+            classify_command("git log $(git rev-parse HEAD~1)"),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_rewrite_command_substitution_passthrough() {
+        assert_eq!(
+            rewrite_command("git log $(git rev-parse HEAD~1)", &[]),
+            Some("tok git log $(git rev-parse HEAD~1)".into())
+        );
+    }
+
+    #[test]
+    fn test_split_command_substitution_no_split() {
+        assert_eq!(
+            split_command_chain("git log $(git rev-parse HEAD~1)"),
+            vec!["git log $(git rev-parse HEAD~1)"]
+        );
+    }
+}
