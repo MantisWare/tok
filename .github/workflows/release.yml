@@ -245,89 +245,91 @@ jobs:
           echo "linux_intel=$(grep x86_64-unknown-linux-musl.tar.gz checksums.txt | head -1 | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Generate formula
+        env:
+          TOK_VERSION: ${{ steps.version.outputs.version }}
+          TOK_TAG: ${{ steps.version.outputs.tag }}
+          SHA_MAC_ARM: ${{ steps.sha.outputs.mac_arm }}
+          SHA_MAC_INTEL: ${{ steps.sha.outputs.mac_intel }}
+          SHA_LINUX_ARM: ${{ steps.sha.outputs.linux_arm }}
+          SHA_LINUX_INTEL: ${{ steps.sha.outputs.linux_intel }}
         run: |
-          cat > tok.rb << 'FORMULA'
-          class Tok < Formula
-            desc "Token Optimization Kit - High-performance CLI proxy to minimize LLM token consumption"
-            homepage "https://github.com/MantisWare/tok"
-            version "VERSION_PLACEHOLDER"
-            license "MIT"
+          ruby -e '
+            version = ENV["TOK_VERSION"]
+            tag     = ENV["TOK_TAG"]
+            puts <<~RUBY
+              class Tok < Formula
+                desc "Token Optimization Kit - High-performance CLI proxy to minimize LLM token consumption"
+                homepage "https://github.com/MantisWare/tok"
+                version "#{version}"
+                license "MIT"
 
-            if OS.mac? && Hardware::CPU.arm?
-              url "https://github.com/MantisWare/tok/releases/download/TAG_PLACEHOLDER/tok-aarch64-apple-darwin.tar.gz"
-              sha256 "SHA_MAC_ARM_PLACEHOLDER"
-            elsif OS.mac? && Hardware::CPU.intel?
-              url "https://github.com/MantisWare/tok/releases/download/TAG_PLACEHOLDER/tok-x86_64-apple-darwin.tar.gz"
-              sha256 "SHA_MAC_INTEL_PLACEHOLDER"
-            elsif OS.linux? && Hardware::CPU.arm?
-              url "https://github.com/MantisWare/tok/releases/download/TAG_PLACEHOLDER/tok-aarch64-unknown-linux-gnu.tar.gz"
-              sha256 "SHA_LINUX_ARM_PLACEHOLDER"
-            elsif OS.linux? && Hardware::CPU.intel?
-              url "https://github.com/MantisWare/tok/releases/download/TAG_PLACEHOLDER/tok-x86_64-unknown-linux-musl.tar.gz"
-              sha256 "SHA_LINUX_INTEL_PLACEHOLDER"
-            end
+                if OS.mac? && Hardware::CPU.arm?
+                  url "https://github.com/MantisWare/tok/releases/download/#{tag}/tok-aarch64-apple-darwin.tar.gz"
+                  sha256 "#{ENV["SHA_MAC_ARM"]}"
+                elsif OS.mac? && Hardware::CPU.intel?
+                  url "https://github.com/MantisWare/tok/releases/download/#{tag}/tok-x86_64-apple-darwin.tar.gz"
+                  sha256 "#{ENV["SHA_MAC_INTEL"]}"
+                elsif OS.linux? && Hardware::CPU.arm?
+                  url "https://github.com/MantisWare/tok/releases/download/#{tag}/tok-aarch64-unknown-linux-gnu.tar.gz"
+                  sha256 "#{ENV["SHA_LINUX_ARM"]}"
+                elsif OS.linux? && Hardware::CPU.intel?
+                  url "https://github.com/MantisWare/tok/releases/download/#{tag}/tok-x86_64-unknown-linux-musl.tar.gz"
+                  sha256 "#{ENV["SHA_LINUX_INTEL"]}"
+                end
 
-            def install
-              bin.install "tok"
-            end
+                def install
+                  bin.install "tok"
+                end
 
-            def caveats
-              <<-'EOS'
+                def caveats; <<~CAVEATS
 
-          ████████╗  ██████╗   ██╗  ██╗
-          ╚══██╔══╝ ██╔═══██╗  ██║ ██╔╝
-             ██║    ██║   ██║  █████╔╝
-             ██║    ██║   ██║  ██╔═██╗
-             ██║     ╚████╔╝   ██║  ██╗
-             ╚═╝      ╚═══╝    ╚═╝  ╚═╝
+                    \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2588\u2588\u2588\u2588\u2557   \u2588\u2588\u2557  \u2588\u2588\u2557
+                    \u255a\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255d \u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2557  \u2588\u2588\u2551 \u2588\u2588\u2554\u255d
+                       \u2588\u2588\u2551    \u2588\u2588\u2551   \u2588\u2588\u2551  \u2588\u2588\u2588\u2588\u2588\u2554\u255d
+                       \u2588\u2588\u2551    \u2588\u2588\u2551   \u2588\u2588\u2551  \u2588\u2588\u2554\u2550\u2588\u2588\u2557
+                       \u2588\u2588\u2551     \u255a\u2588\u2588\u2588\u2588\u2554\u255d   \u2588\u2588\u2551  \u2588\u2588\u2557
+                       \u255a\u2550\u255d      \u255a\u2550\u2550\u2550\u255d    \u255a\u2550\u255d  \u255a\u2550\u255d
 
-          tok VERSION_PLACEHOLDER — Token Optimization Kit
-          Squeeze noisy CLI output before it hits your LLM
+                  tok #{version} \u2014 Token Optimization Kit
+                  Squeeze noisy CLI output before it hits your LLM
 
-          ── Quick Start ─────────────────────────────────────
+                \u2500\u2500 Quick Start \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-            # 1. Install for your AI tool
-            tok init -g                  # Claude Code (recommended)
-            tok init -g --gemini         # Gemini CLI
-            tok init -g --codex          # Codex (OpenAI)
-            tok init -g --agent cursor   # Cursor
+                  # 1. Install for your AI tool
+                  tok init -g                  # Claude Code (recommended)
+                  tok init -g --gemini         # Gemini CLI
+                  tok init -g --codex          # Codex (OpenAI)
+                  tok init -g --agent cursor   # Cursor
 
-            # 2. Restart your AI tool, then test
-            tok --version                # Verify installation
-            tok gain                     # View token savings
+                  # 2. Restart your AI tool, then test
+                  tok --version                # Verify installation
+                  tok gain                     # View token savings
 
-          ── What It Does ──────────────────────────────────
+                \u2500\u2500 What It Does \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-            tok sits between your shell and your LLM, filtering
-            command output for 60-90% token savings:
+                  tok sits between your shell and your LLM, filtering
+                  command output for 60-90% token savings:
 
-            tok git status          # Compact status
-            tok cargo test          # Failures only (-90%)
-            tok ls .                # Token-optimized tree
-            tok grep "pattern" .    # Grouped results
+                  tok git status          # Compact status
+                  tok cargo test          # Failures only (-90%)
+                  tok ls .                # Token-optimized tree
+                  tok grep "pattern" .    # Grouped results
 
-          ── Resources ─────────────────────────────────────
+                \u2500\u2500 Resources \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-            Docs:   https://github.com/MantisWare/tok
-            Help:   tok --help
-            Issues: https://github.com/MantisWare/tok/issues
+                  Docs:   https://github.com/MantisWare/tok
+                  Help:   tok --help
+                  Issues: https://github.com/MantisWare/tok/issues
 
-              EOS
-            end
+                CAVEATS
+                end
 
-            test do
-              system "#{bin}/tok", "--version"
-            end
-          end
-          FORMULA
-          sed -i "s/VERSION_PLACEHOLDER/${{ steps.version.outputs.version }}/g" tok.rb
-          sed -i "s/TAG_PLACEHOLDER/${{ steps.version.outputs.tag }}/g" tok.rb
-          sed -i "s/SHA_MAC_ARM_PLACEHOLDER/${{ steps.sha.outputs.mac_arm }}/g" tok.rb
-          sed -i "s/SHA_MAC_INTEL_PLACEHOLDER/${{ steps.sha.outputs.mac_intel }}/g" tok.rb
-          sed -i "s/SHA_LINUX_ARM_PLACEHOLDER/${{ steps.sha.outputs.linux_arm }}/g" tok.rb
-          sed -i "s/SHA_LINUX_INTEL_PLACEHOLDER/${{ steps.sha.outputs.linux_intel }}/g" tok.rb
-          # Remove leading spaces from heredoc
-          sed -i 's/^          //' tok.rb
+                test do
+                  system "\#{bin}/tok", "--version"
+                end
+              end
+            RUBY
+          ' > tok.rb
 
       - name: Push to homebrew-tap
         run: |
