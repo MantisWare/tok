@@ -32,6 +32,22 @@ If `tok gain` fails but `tok --version` succeeds, you likely have a **different*
 
 ## Installation (only if TOK not available or wrong TOK installed)
 
+### Homebrew (macOS)
+
+```bash
+brew tap MantisWare/tap
+brew install tok
+```
+
+- Tap repository: [github.com/MantisWare/homebrew-tap](https://github.com/MantisWare/homebrew-tap)
+- The `tok` formula is updated when a **stable** GitHub Release is published (see [Release process](docs/contributing/RELEASE.md)).
+
+Then verify:
+
+```bash
+tok gain   # must show token savings stats
+```
+
 ### Step 0: Uninstall Wrong TOK (if needed)
 
 If you installed the wrong crate as `tok`:
@@ -371,6 +387,7 @@ cargo install --path . --force
 ## Support and Contributing
 
 - **Project**: https://github.com/MantisWare/tok
+- **Homebrew tap**: https://github.com/MantisWare/homebrew-tap
 - **Troubleshooting**: See [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues
 - **GitHub issues**: https://github.com/MantisWare/tok/issues
 - **Pull Requests**: https://github.com/MantisWare/tok/pulls
@@ -382,9 +399,11 @@ cargo install --path . --force
 Before each session:
 
 - [ ] Verify TOK is installed: `tok --version`
-- [ ] If not installed → follow "Install from fork"
+- [ ] If not installed → follow "Install from fork" (macOS: Homebrew `brew tap MantisWare/tap && brew install tok`, or Cargo/install.sh as documented above)
 - [ ] If project not initialized → `tok init`
 - [ ] Use `tok` for ALL git/pnpm/test/vitest commands
 - [ ] Check savings: `tok gain`
 
 **Golden Rule**: AI coding assistants should ALWAYS use `tok` as a proxy for shell commands that generate verbose output (git, pnpm, npm, cargo test, vitest, docker, kubectl).
+
+> **Auto-updated by Cursor:** Documented Homebrew tap `MantisWare/tap` and link to [docs/contributing/RELEASE.md](docs/contributing/RELEASE.md) on 2026-04-08.

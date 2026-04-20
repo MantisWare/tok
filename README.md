@@ -32,13 +32,22 @@
 
 ## Installation
 
+### Homebrew (macOS)
+
+```bash
+brew tap MantisWare/tap
+brew install tok
+```
+
+Tap: [github.com/MantisWare/homebrew-tap](https://github.com/MantisWare/homebrew-tap) — the formula is updated automatically on each **stable** release when CI is configured ([details](docs/contributing/RELEASE.md)).
+
 ### Cargo
 
 ```bash
 cargo install --git https://github.com/MantisWare/tok
 ```
 
-For more options later, see **[INSTALL.md](INSTALL.md)**.
+For more options, see **[INSTALL.md](INSTALL.md)**.
 
 ### Verify Installation
 
@@ -431,6 +440,7 @@ cargo uninstall tok          # Remove binary
 
 - **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Fix common issues
 - **[INSTALL.md](INSTALL.md)** - Detailed installation guide
+- **[RELEASE.md](docs/contributing/RELEASE.md)** - Stable releases, Homebrew tap, maintainer checklist
 - **[ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)** - Technical architecture
 - **[SECURITY.md](SECURITY.md)** - Security policy and PR review process
 - **[AUDIT_GUIDE.md](docs/AUDIT_GUIDE.md)** - Token savings analytics guide

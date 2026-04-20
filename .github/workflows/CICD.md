@@ -137,3 +137,7 @@ Trigger: workflow_dispatch
      Homebrew       badge only
      latest tag
 ```
+
+## Maintainer checklist
+
+For secrets, release-please, merging the Release PR, and verifying the Homebrew tap, see **[docs/contributing/RELEASE.md](../../docs/contributing/RELEASE.md)**.

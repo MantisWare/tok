@@ -119,15 +119,13 @@ hyperfine 'target/release/tok git log -10' --warmup 3
 
 ## Deploy and release (maintainers)
 
-Shipping is automated in GitHub Actions; local steps are for verification or emergency builds.
+Shipping is automated in GitHub Actions; local steps are for verification or emergency builds. **Step-by-step:** [RELEASE.md](RELEASE.md) (release-please, secrets, Homebrew tap [MantisWare/homebrew-tap](https://github.com/MantisWare/homebrew-tap)).
 
 ### GitHub Actions
 
 - **CI** (`.github/workflows/ci.yml`): on pull requests to `develop` / `master`—format, clippy, tests, security scans, and related gates.
 - **CD** (`.github/workflows/cd.yml`): on push to `develop` / `master` or manual dispatch—pre-release / release orchestration (see workflow for branch rules).
-- **Release** (`.github/workflows/release.yml`): builds cross-platform archives (`tar.gz` / `zip`), DEB and RPM packages, uploads assets to a GitHub Release (invoked via workflow call or dispatch with a tag).
-
-Maintainers trigger releases through the repository’s release/CD workflows and tags; exact steps depend on your fork’s branch policy.
+- **Release** (`.github/workflows/release.yml`): builds cross-platform archives (`tar.gz` / `zip`), DEB and RPM packages, uploads assets to a GitHub Release, and can update the external Homebrew tap (invoked via workflow call or dispatch with a tag).
 
 ### Local packages (optional)
 
@@ -138,7 +136,7 @@ cargo deb          # needs cargo-deb; outputs under target/debian/
 cargo generate-rpm # needs cargo-generate-rpm; outputs under target/generate-rpm/
 ```
 
-Homebrew packaging for this project lives under `Formula/` in the repo; upstream tap updates are separate from the Rust build.
+A template formula lives under `Formula/tok.rb` in this repo; the **published** formula for `brew install tok` is maintained in **[MantisWare/homebrew-tap](https://github.com/MantisWare/homebrew-tap)** by CI on stable releases.
 
 ### Environment variables (builds)
 

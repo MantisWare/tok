@@ -1,6 +1,6 @@
 # Contributing to tok
 
-Thanks for hanging out with the codebase. For build, run, test, and release workflows from a clone, start with [docs/contributing/DEVELOPMENT.md](docs/contributing/DEVELOPMENT.md). For how things are wired, what we expect in tests, and the big picture, peek at [docs/contributing/TECHNICAL.md](docs/contributing/TECHNICAL.md) and [docs/contributing/ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md).
+Thanks for hanging out with the codebase. For build, run, test, and release workflows from a clone, start with [docs/contributing/DEVELOPMENT.md](docs/contributing/DEVELOPMENT.md). **Cutting a stable release or updating the Homebrew tap?** Follow [docs/contributing/RELEASE.md](docs/contributing/RELEASE.md). For how things are wired, what we expect in tests, and the big picture, peek at [docs/contributing/TECHNICAL.md](docs/contributing/TECHNICAL.md) and [docs/contributing/ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md).
 
 ## Building from source
 
