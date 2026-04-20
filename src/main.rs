@@ -1202,62 +1202,46 @@ fn print_version_banner() {
         return;
     }
 
-    let c = |s: &str| s.bright_cyan(); // T, K letters
-    let b = |s: &str| s.blue(); // O left arc
-    let y = |s: &str| s.bright_yellow(); // O right arc / amber accent
-    let yd = |s: &str| s.yellow(); // darker yellow (lower rows)
-    let g = |s: &str| s.green(); // bar accent (upper)
-    let gb = |s: &str| s.bright_green(); // bar accent (lower)
+    let t = |s: &str| s.bright_cyan();
+    let o = |s: &str| s.blue();
+    let k = |s: &str| s.bright_yellow();
 
     println!(
-        "{}{}{}{}{}",
-        c("  ████████╗"),
-        b("  ██████╗ "),
-        g("█"),
-        y("█"),
-        c("  ██╗  ██╗")
+        "{}{}{}",
+        t("  ████████╗"),
+        o("  ██████╗ "),
+        k("  ██╗  ██╗")
     );
     println!(
-        "{}{}{}{}{}",
-        c("  ╚══██╔══╝"),
-        b(" ██╔═══██╗"),
-        g("█"),
-        y("█"),
-        c("  ██║ ██╔╝")
+        "{}{}{}",
+        t("  ╚══██╔══╝"),
+        o(" ██╔═══██╗"),
+        k("  ██║ ██╔╝")
     );
     println!(
-        "{}{}{}{}{}",
-        c("     ██║   "),
-        b(" ██║   ██║"),
-        g("█"),
-        y("█"),
-        c("  █████╔╝ ")
+        "{}{}{}",
+        t("     ██║   "),
+        o(" ██║   ██║"),
+        k("  █████╔╝ ")
     );
     println!(
-        "{}{}{}{}{}",
-        c("     ██║   "),
-        b(" ██║   ██║"),
-        g("█"),
-        yd("█"),
-        c("  ██╔═██╗ ")
+        "{}{}{}",
+        t("     ██║   "),
+        o(" ██║   ██║"),
+        k("  ██╔═██╗ ")
     );
     println!(
-        "{}{}{}{}{}",
-        c("     ██║   "),
-        b("  ╚████╔╝"),
-        gb("█"),
-        yd("█"),
-        c("  ██║  ██╗")
+        "{}{}{}",
+        t("     ██║   "),
+        o("  ╚████╔╝ "),
+        k("  ██║  ██╗")
     );
     println!(
-        "{}{}{}{}{}",
-        c("     ╚═╝   "),
-        b("  ╚═══╝ "),
-        gb("█"),
-        yd("█"),
-        c("  ╚═╝  ╚═╝")
+        "{}{}{}",
+        t("     ╚═╝   "),
+        o("  ╚═══╝  "),
+        k("  ╚═╝  ╚═╝")
     );
-    println!("                     {}{}", gb("▀"), yd("▀"));
     println!();
     println!(
         "  {} {} {}",
