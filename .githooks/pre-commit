@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Pre-commit hook: auto-increment patch version in Cargo.toml and .release-please-manifest.json
+# Install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+CARGO_TOML="Cargo.toml"
+MANIFEST=".release-please-manifest.json"
+
+if [ ! -f "$CARGO_TOML" ]; then
+  exit 0
+fi
+
+CURRENT_VERSION=$(grep '^version' "$CARGO_TOML" | head -1 | sed 's/.*"\(.*\)"/\1/')
+
+if [ -z "$CURRENT_VERSION" ]; then
+  echo "pre-commit: could not parse version from $CARGO_TOML"
+  exit 1
+fi
+
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+PATCH=$((PATCH + 1))
+NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+# Portable sed: replace only the package version line (first version = "..." in file)
+awk -v old="$CURRENT_VERSION" -v new="$NEW_VERSION" '
+  !done && /^version = "/ {
+    sub("\"" old "\"", "\"" new "\"")
+    done = 1
+  }
+  { print }
+' "$CARGO_TOML" > "${CARGO_TOML}.tmp" && mv "${CARGO_TOML}.tmp" "$CARGO_TOML"
+
+if [ -f "$MANIFEST" ]; then
+  awk -v old="$CURRENT_VERSION" -v new="$NEW_VERSION" '
+    { gsub("\"" old "\"", "\"" new "\""); print }
+  ' "$MANIFEST" > "${MANIFEST}.tmp" && mv "${MANIFEST}.tmp" "$MANIFEST"
+fi
+
+git add "$CARGO_TOML"
+[ -f "$MANIFEST" ] && git add "$MANIFEST"
+
+echo "pre-commit: version bumped ${CURRENT_VERSION} → ${NEW_VERSION}"

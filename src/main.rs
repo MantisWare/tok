@@ -18,7 +18,9 @@ pub(crate) use cmds::system::{json_cmd, log_cmd};
 use anyhow::Result;
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand, ValueEnum};
+use colored::Colorize;
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 /// Which coding agent gets the hook treatment.
@@ -1192,6 +1194,83 @@ pub(crate) enum GtCommands {
     Other(Vec<OsString>),
 }
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn print_version_banner() {
+    if !std::io::stdout().is_terminal() {
+        println!("tok {VERSION}");
+        return;
+    }
+
+    let c = |s: &str| s.bright_cyan(); // T, K letters
+    let b = |s: &str| s.blue(); // O left arc
+    let y = |s: &str| s.bright_yellow(); // O right arc / amber accent
+    let yd = |s: &str| s.yellow(); // darker yellow (lower rows)
+    let g = |s: &str| s.green(); // bar accent (upper)
+    let gb = |s: &str| s.bright_green(); // bar accent (lower)
+
+    println!(
+        "{}{}{}{}{}",
+        c("  ████████╗"),
+        b("  ██████╗ "),
+        g("█"),
+        y("█"),
+        c("  ██╗  ██╗")
+    );
+    println!(
+        "{}{}{}{}{}",
+        c("  ╚══██╔══╝"),
+        b(" ██╔═══██╗"),
+        g("█"),
+        y("█"),
+        c("  ██║ ██╔╝")
+    );
+    println!(
+        "{}{}{}{}{}",
+        c("     ██║   "),
+        b(" ██║   ██║"),
+        g("█"),
+        y("█"),
+        c("  █████╔╝ ")
+    );
+    println!(
+        "{}{}{}{}{}",
+        c("     ██║   "),
+        b(" ██║   ██║"),
+        g("█"),
+        yd("█"),
+        c("  ██╔═██╗ ")
+    );
+    println!(
+        "{}{}{}{}{}",
+        c("     ██║   "),
+        b("  ╚████╔╝"),
+        gb("█"),
+        yd("█"),
+        c("  ██║  ██╗")
+    );
+    println!(
+        "{}{}{}{}{}",
+        c("     ╚═╝   "),
+        b("  ╚═══╝ "),
+        gb("█"),
+        yd("█"),
+        c("  ╚═╝  ╚═╝")
+    );
+    println!("                     {}{}", gb("▀"), yd("▀"));
+    println!();
+    println!(
+        "  {} {} {}",
+        "tok".bright_cyan().bold(),
+        VERSION.bright_white().bold(),
+        "— Token Optimization Kit".bright_black()
+    );
+    println!(
+        "  {}",
+        "Squeeze noisy CLI output before it hits your LLM".bright_black()
+    );
+}
+
 fn main() {
     let code = match run_cli() {
         Ok(code) => code,
@@ -1210,8 +1289,12 @@ fn run_cli() -> Result<i32> {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => {
-            if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+            if e.kind() == ErrorKind::DisplayHelp {
                 e.exit();
+            }
+            if e.kind() == ErrorKind::DisplayVersion {
+                print_version_banner();
+                return Ok(0);
             }
             return run_fallback(e);
         }
@@ -1442,6 +1525,11 @@ mod tests {
             Err(e) => assert_eq!(e.kind(), ErrorKind::DisplayVersion),
             Ok(_) => panic!("Expected DisplayVersion error"),
         }
+    }
+
+    #[test]
+    fn test_print_version_banner_does_not_panic() {
+        print_version_banner();
     }
 
     #[test]

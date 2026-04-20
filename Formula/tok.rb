@@ -23,7 +23,7 @@ class Tok < Formula
 
   on_linux do
     on_intel do
-      url "https://github.com/MantisWare/tok/releases/download/v#{version}/tok-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/MantisWare/tok/releases/download/v#{version}/tok-x86_64-unknown-linux-musl.tar.gz"
       sha256 "PLACEHOLDER_SHA256_LINUX_INTEL"
     end
 
