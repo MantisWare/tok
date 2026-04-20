@@ -37,6 +37,49 @@ class Tok < Formula
     bin.install "tok"
   end
 
+  def caveats
+    <<~EOS
+
+        ████████╗  ██████╗   ██╗  ██╗
+        ╚══██╔══╝ ██╔═══██╗  ██║ ██╔╝
+           ██║    ██║   ██║  █████╔╝
+           ██║    ██║   ██║  ██╔═██╗
+           ██║     ╚████╔╝   ██║  ██╗
+           ╚═╝      ╚═══╝    ╚═╝  ╚═╝
+        tok #{version} — Token Optimization Kit
+        Squeeze noisy CLI output before it hits your LLM
+
+      ── Quick Start ─────────────────────────────────────
+
+        # 1. Install for your AI tool
+        tok init -g                  # Claude Code (recommended)
+        tok init -g --gemini         # Gemini CLI
+        tok init -g --codex          # Codex (OpenAI)
+        tok init -g --agent cursor   # Cursor
+
+        # 2. Restart your AI tool, then test
+        tok --version                # Verify installation
+        tok gain                     # View token savings
+
+      ── What It Does ──────────────────────────────────
+
+        tok sits between your shell and your LLM, filtering
+        command output for 60-90% token savings:
+
+        tok git status          # Compact status
+        tok cargo test          # Failures only (-90%)
+        tok ls .                # Token-optimized tree
+        tok grep "pattern" .    # Grouped results
+
+      ── Resources ─────────────────────────────────────
+
+        Docs:   https://github.com/MantisWare/tok
+        Help:   tok --help
+        Issues: https://github.com/MantisWare/tok/issues
+
+    EOS
+  end
+
   test do
     assert_match "tok #{version}", shell_output("#{bin}/tok --version")
   end
