@@ -1,6 +1,6 @@
 [package]
 name = "tok"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 authors = ["Patrick Szymkowiak"]
 description = "Token Optimization Kit - High-performance CLI proxy to minimize LLM token consumption"
@@ -42,6 +42,9 @@ libc = "0.2"
 toml = "0.8"
 
 [dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+assert_fs = "1"
 
 [profile.release]
 opt-level = 3

@@ -342,6 +342,10 @@ pub(crate) enum Commands {
         /// Install GitHub Copilot integration (VS Code + CLI)
         #[arg(long)]
         copilot: bool,
+
+        /// Install for ALL supported agents at once (global + project-local)
+        #[arg(long)]
+        all: bool,
     },
 
     /// wget — skip the progress-bar light show
@@ -1051,9 +1055,10 @@ const TOK_META_COMMANDS: &[&str] = &[
 fn run_fallback(parse_error: clap::Error) -> Result<i32> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    // No args → show Clap's error (user ran just "tok" with bad syntax)
+    // No args → show branded welcome screen
     if args.is_empty() {
-        parse_error.exit();
+        print_welcome_screen();
+        return Ok(0);
     }
 
     // TOK meta-commands should never fall back to raw execution.
@@ -1206,42 +1211,12 @@ fn print_version_banner() {
     let o = |s: &str| s.blue();
     let k = |s: &str| s.bright_yellow();
 
-    println!(
-        "{}{}{}",
-        t("  ████████╗"),
-        o("  ██████╗ "),
-        k("  ██╗  ██╗")
-    );
-    println!(
-        "{}{}{}",
-        t("  ╚══██╔══╝"),
-        o(" ██╔═══██╗"),
-        k("  ██║ ██╔╝")
-    );
-    println!(
-        "{}{}{}",
-        t("     ██║   "),
-        o(" ██║   ██║"),
-        k("  █████╔╝ ")
-    );
-    println!(
-        "{}{}{}",
-        t("     ██║   "),
-        o(" ██║   ██║"),
-        k("  ██╔═██╗ ")
-    );
-    println!(
-        "{}{}{}",
-        t("     ██║   "),
-        o("  ╚████╔╝ "),
-        k("  ██║  ██╗")
-    );
-    println!(
-        "{}{}{}",
-        t("     ╚═╝   "),
-        o("  ╚═══╝  "),
-        k("  ╚═╝  ╚═╝")
-    );
+    println!("{}{}{}", t("  ████████╗"), o("  ██████╗ "), k("  ██╗  ██╗"));
+    println!("{}{}{}", t("  ╚══██╔══╝"), o(" ██╔═══██╗"), k("  ██║ ██╔╝"));
+    println!("{}{}{}", t("     ██║   "), o(" ██║   ██║"), k("  █████╔╝ "));
+    println!("{}{}{}", t("     ██║   "), o(" ██║   ██║"), k("  ██╔═██╗ "));
+    println!("{}{}{}", t("     ██║   "), o("  ╚████╔╝ "), k("  ██║  ██╗"));
+    println!("{}{}{}", t("     ╚═╝   "), o("  ╚═══╝  "), k("  ╚═╝  ╚═╝"));
     println!();
     println!(
         "  {} {} {}",
@@ -1252,6 +1227,241 @@ fn print_version_banner() {
     println!(
         "  {}",
         "Squeeze noisy CLI output before it hits your LLM".bright_black()
+    );
+}
+
+fn print_welcome_screen() {
+    if !std::io::stdout().is_terminal() {
+        println!("tok {VERSION}");
+        return;
+    }
+
+    let t = |s: &str| s.bright_cyan();
+    let o = |s: &str| s.blue();
+    let k = |s: &str| s.bright_yellow();
+
+    // ── ASCII art banner ──────────────────────────────────────────────
+    println!("{}{}{}", t("  ████████╗"), o("  ██████╗ "), k("  ██╗  ██╗"));
+    println!("{}{}{}", t("  ╚══██╔══╝"), o(" ██╔═══██╗"), k("  ██║ ██╔╝"));
+    println!("{}{}{}", t("     ██║   "), o(" ██║   ██║"), k("  █████╔╝ "));
+    println!("{}{}{}", t("     ██║   "), o(" ██║   ██║"), k("  ██╔═██╗ "));
+    println!("{}{}{}", t("     ██║   "), o("  ╚████╔╝ "), k("  ██║  ██╗"));
+    println!("{}{}{}", t("     ╚═╝   "), o("  ╚═══╝  "), k("  ╚═╝  ╚═╝"));
+    println!();
+
+    // ── Version / Author ──────────────────────────────────────────────
+    println!(
+        "  {} {} {}",
+        "T O K".bright_cyan().bold(),
+        format!("v{VERSION}").bright_white().bold(),
+        "— Token Optimization Kit".bright_black()
+    );
+    println!(
+        "  {}",
+        "Squeeze noisy CLI output before it hits your LLM".bright_black()
+    );
+    println!();
+    println!(
+        "  {} {}",
+        "Author:".bright_black(),
+        "MantisWare (Waldo Marais)".white()
+    );
+    println!();
+
+    // ── Installation Status (boxed) ───────────────────────────────────
+    let statuses = hooks::init::detect_agent_statuses();
+
+    let box_width = 64;
+    let border = "─".repeat(box_width - 2);
+    let title = " Installation Status ";
+    let title_border_len = box_width - 2 - title.len();
+    let title_line = format!(
+        "  {}{}{}{}",
+        "┌".bright_blue(),
+        title.bright_white().bold(),
+        "─".repeat(title_border_len).bright_blue(),
+        "┐".bright_blue()
+    );
+    println!("{title_line}");
+
+    let check = "\u{2714}".green();
+    let warn = "!".yellow();
+
+    let mut installed_count = 0usize;
+    let total = statuses.len();
+
+    // Inner width = box_width - 2 (between │ and │)
+    let inner = box_width - 2;
+
+    for s in &statuses {
+        if s.installed {
+            installed_count += 1;
+        }
+        let icon = if s.installed { &check } else { &warn };
+        let name_pad = format!("{:<16}", s.name);
+        let detail = &s.detail;
+        // visible: "  ✔ Name             detail"
+        let visible_len = 2 + 1 + 1 + 16 + 2 + detail.len();
+        let pad = if visible_len < inner {
+            " ".repeat(inner - visible_len)
+        } else {
+            String::new()
+        };
+        println!(
+            "  {}  {} {}  {}{}{}",
+            "│".bright_blue(),
+            icon,
+            name_pad,
+            detail,
+            pad,
+            "│".bright_blue()
+        );
+    }
+
+    // empty line
+    println!(
+        "  {}{}{}",
+        "│".bright_blue(),
+        " ".repeat(inner),
+        "│".bright_blue()
+    );
+
+    // summary line
+    let summary_icon = if installed_count == total {
+        &check
+    } else {
+        &warn
+    };
+    // visible: "  ✔ N/M agents configured"
+    let summary_visible_text = format!("{}/{} agents configured", installed_count, total);
+    let summary_visible_len = 2 + 1 + 1 + summary_visible_text.len();
+    let summary_pad = if summary_visible_len < inner {
+        " ".repeat(inner - summary_visible_len)
+    } else {
+        String::new()
+    };
+    println!(
+        "  {}  {} {}{}{}",
+        "│".bright_blue(),
+        summary_icon,
+        summary_visible_text,
+        summary_pad,
+        "│".bright_blue()
+    );
+
+    println!(
+        "  {}{}{}",
+        "└".bright_blue(),
+        border.bright_blue(),
+        "┘".bright_blue()
+    );
+    println!();
+
+    // ── Quick Start Guide (boxed) ─────────────────────────────────────
+    let guide_title = " Quick Start Guide ";
+    let guide_border_len = box_width - 2 - guide_title.len();
+    println!(
+        "  {}{}{}{}",
+        "┌".bright_blue(),
+        guide_title.bright_white().bold(),
+        "─".repeat(guide_border_len).bright_blue(),
+        "┐".bright_blue()
+    );
+
+    let cmd_col = 32;
+
+    let print_cmd_row = |cmd: &str, desc: &str| {
+        let cmd_pad = if cmd.len() < cmd_col {
+            " ".repeat(cmd_col - cmd.len())
+        } else {
+            " ".to_string()
+        };
+        // visible between │…│: "  " + cmd + cmd_pad + desc + row_pad = inner
+        let content_len = 2 + cmd.len() + cmd_pad.len() + desc.len();
+        let row_pad = if content_len < inner {
+            " ".repeat(inner - content_len)
+        } else {
+            String::new()
+        };
+        println!(
+            "  {}  {}{}{}{}{}",
+            "│".bright_blue(),
+            cmd.bright_yellow(),
+            cmd_pad,
+            desc.bright_black(),
+            row_pad,
+            "│".bright_blue()
+        );
+    };
+
+    let print_header = |text: &str| {
+        let pad = " ".repeat(inner - 2 - text.len());
+        println!(
+            "  {}  {}{}{}",
+            "│".bright_blue(),
+            text.bright_white().bold(),
+            pad,
+            "│".bright_blue()
+        );
+    };
+
+    let print_spacer = || {
+        println!(
+            "  {}{}{}",
+            "│".bright_blue(),
+            " ".repeat(inner),
+            "│".bright_blue()
+        );
+    };
+
+    // Setup section
+    print_header("Setup");
+    print_cmd_row("tok init -g", "Install for Claude Code (recommended)");
+    print_cmd_row("tok init -g --agent cursor", "Install for Cursor");
+    print_cmd_row("tok init -g --gemini", "Install for Gemini CLI");
+    print_cmd_row("tok init --codex", "Install for Codex CLI");
+    print_cmd_row("tok init -g --opencode", "Install for OpenCode");
+    print_cmd_row("tok init --copilot", "Install for GitHub Copilot");
+    print_cmd_row("tok init --all", "Install for ALL agents at once");
+
+    print_spacer();
+
+    // Usage section
+    print_header("Usage");
+    print_cmd_row("tok <command>", "Any command \u{2014} auto-filtered");
+    print_cmd_row("tok git status", "Git without the wall of text");
+    print_cmd_row("tok cargo test", "Test output, failures only");
+    print_cmd_row("tok gain", "Token savings stats");
+    print_cmd_row("tok gain --graph", "ASCII graph of daily savings");
+    print_cmd_row("tok discover", "Find missed TOK opportunities");
+    print_cmd_row("tok proxy <cmd>", "Passthrough (still tracks stats)");
+    print_cmd_row("tok --help", "All commands and flags");
+
+    print_spacer();
+
+    // documentation link
+    let doc_text = "Documentation: ";
+    let doc_url = "https://github.com/MantisWare/tok";
+    let doc_visible = 2 + doc_text.len() + doc_url.len();
+    let doc_pad = if doc_visible < inner {
+        " ".repeat(inner - doc_visible)
+    } else {
+        String::new()
+    };
+    println!(
+        "  {}  {}{}{}{}",
+        "│".bright_blue(),
+        doc_text.bright_black(),
+        doc_url.bright_cyan(),
+        doc_pad,
+        "│".bright_blue()
+    );
+
+    println!(
+        "  {}{}{}",
+        "└".bright_blue(),
+        border.bright_blue(),
+        "┘".bright_blue()
     );
 }
 

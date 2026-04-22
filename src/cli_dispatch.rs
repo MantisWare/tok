@@ -395,8 +395,11 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
             uninstall,
             codex,
             copilot,
+            all,
         } => {
-            if show {
+            if all {
+                crate::hooks::init::run_all(cli.verbose)?;
+            } else if show {
                 crate::hooks::init::show_config(codex)?;
             } else if uninstall {
                 let cursor = agent == Some(AgentTarget::Cursor);

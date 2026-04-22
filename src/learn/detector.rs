@@ -122,6 +122,91 @@ pub struct CommandExecution {
 
 const CORRECTION_WINDOW: usize = 3;
 const MIN_CONFIDENCE: f64 = 0.6;
+/// Commands longer than this are likely inline scripts, not CLI invocations
+const MAX_COMMAND_LEN: usize = 200;
+
+lazy_static! {
+    /// Matches inline script flags: python -c, node -e, ruby -e, perl -e, etc.
+    static ref INLINE_SCRIPT_RE: Regex = Regex::new(
+        r"^(python[23]?|node|ruby|perl|bash|sh|zsh)\s+-(c|e)\s"
+    ).unwrap();
+
+    /// Matches heredoc redirections: cat > file << 'EOF', cat <<EOF, etc.
+    static ref HEREDOC_RE: Regex = Regex::new(
+        r"<<-?\s*'?\w+'?"
+    ).unwrap();
+}
+
+/// Returns true if the command is an inline script that should be skipped.
+/// Inline scripts (python -c, node -e, heredocs) are code iterations,
+/// not CLI corrections.
+fn is_inline_script(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    if INLINE_SCRIPT_RE.is_match(trimmed) {
+        return true;
+    }
+    if HEREDOC_RE.is_match(trimmed) {
+        return true;
+    }
+    false
+}
+
+/// Returns true if the command contains embedded newlines (multiline script).
+fn is_multiline_command(cmd: &str) -> bool {
+    cmd.contains('\n')
+}
+
+/// Returns true if two commands differ only by trailing pipe or redirect operators.
+/// Adding `| tail`, `| head`, `2>&1`, etc. is exploration, not a correction.
+fn differs_only_by_pipe_redirect(a: &str, b: &str) -> bool {
+    if a == b {
+        return false;
+    }
+    let core_a = strip_trailing_pipe(a);
+    let core_b = strip_trailing_pipe(b);
+    core_a == core_b
+}
+
+/// Repeatedly strip trailing pipe and redirect operators from a command string.
+fn strip_trailing_pipe(s: &str) -> &str {
+    let mut result = s.trim();
+    loop {
+        let before = result;
+        if let Some(pos) = result.rfind(" | ") {
+            result = result[..pos].trim();
+        }
+        if let Some(pos) = result.rfind(" 2>&1") {
+            result = result[..pos].trim();
+        }
+        if let Some(pos) = result.rfind(" >&2") {
+            result = result[..pos].trim();
+        }
+        if let Some(pos) = result.rfind(" > ") {
+            result = result[..pos].trim();
+        }
+        if let Some(pos) = result.rfind(" >> ") {
+            result = result[..pos].trim();
+        }
+        if result == before {
+            break;
+        }
+    }
+    result
+}
+
+/// Returns true if the command should be excluded from correction detection.
+fn should_skip_command(cmd: &str) -> bool {
+    if cmd.len() > MAX_COMMAND_LEN {
+        return true;
+    }
+    if is_multiline_command(cmd) {
+        return true;
+    }
+    if is_inline_script(cmd) {
+        return true;
+    }
+    false
+}
 
 /// Extract base command (first 1-2 tokens, stripping env prefixes)
 pub fn extract_base_command(cmd: &str) -> String {
@@ -219,6 +304,11 @@ pub fn find_corrections(commands: &[CommandExecution]) -> Vec<CorrectionPair> {
     for i in 0..commands.len() {
         let cmd = &commands[i];
 
+        // Skip inline scripts, multiline commands, and overly long commands
+        if should_skip_command(&cmd.command) {
+            continue;
+        }
+
         // Must be an actual error
         if !is_command_error(cmd.is_error, &cmd.output) {
             continue;
@@ -233,6 +323,16 @@ pub fn find_corrections(commands: &[CommandExecution]) -> Vec<CorrectionPair> {
 
         // Look ahead for correction within CORRECTION_WINDOW
         for candidate in commands.iter().skip(i + 1).take(CORRECTION_WINDOW) {
+            // Skip candidate if it's also an inline script or too long
+            if should_skip_command(&candidate.command) {
+                continue;
+            }
+
+            // Skip if only pipe/redirect was added (exploration, not correction)
+            if differs_only_by_pipe_redirect(&cmd.command, &candidate.command) {
+                continue;
+            }
+
             let similarity = command_similarity(&cmd.command, &candidate.command);
 
             // Must meet minimum similarity
@@ -263,7 +363,6 @@ pub fn find_corrections(commands: &[CommandExecution]) -> Vec<CorrectionPair> {
                 continue;
             }
 
-            // Found a correction!
             corrections.push(CorrectionPair {
                 wrong_command: cmd.command.clone(),
                 right_command: candidate.command.clone(),
@@ -600,6 +699,141 @@ mod tests {
         assert_eq!(rules[0].base_command, "git commit");
         // Should keep highest confidence example (0.9)
         assert!(rules[0].wrong_pattern.contains("'fix'"));
+    }
+
+    #[test]
+    fn test_is_inline_script() {
+        assert!(is_inline_script(
+            r#"python -c "import sys; print(sys.version)""#
+        ));
+        assert!(is_inline_script(r#"python3 -c "print('hello')""#));
+        assert!(is_inline_script(r#"node -e "console.log(1)""#));
+        assert!(is_inline_script(r#"ruby -e "puts 1""#));
+        assert!(is_inline_script(r#"perl -e "print 1""#));
+        assert!(is_inline_script(r#"bash -c "echo hi""#));
+        assert!(!is_inline_script("python script.py"));
+        assert!(!is_inline_script("git commit --amend"));
+        assert!(!is_inline_script("cargo test"));
+    }
+
+    #[test]
+    fn test_is_inline_script_heredoc() {
+        assert!(is_inline_script("cat > /tmp/test.js << 'EOF'"));
+        assert!(is_inline_script("cat <<EOF"));
+        assert!(is_inline_script("cat <<-EOF"));
+        assert!(!is_inline_script("cat file.txt"));
+    }
+
+    #[test]
+    fn test_is_multiline_command() {
+        assert!(is_multiline_command("echo hi\necho bye"));
+        assert!(!is_multiline_command("echo hi"));
+    }
+
+    #[test]
+    fn test_should_skip_command_long() {
+        let short = "git commit --amend";
+        let long = "a ".repeat(150); // 300 chars
+        assert!(!should_skip_command(short));
+        assert!(should_skip_command(&long));
+    }
+
+    #[test]
+    fn test_differs_only_by_pipe_redirect() {
+        assert!(differs_only_by_pipe_redirect(
+            "npx vite build 2>&1",
+            "npx vite build 2>&1 | tail -10"
+        ));
+        assert!(differs_only_by_pipe_redirect(
+            "cargo test 2>&1",
+            "cargo test 2>&1 | head -20"
+        ));
+        assert!(!differs_only_by_pipe_redirect(
+            "git commit --ammend",
+            "git commit --amend"
+        ));
+        // Identical commands should not match
+        assert!(!differs_only_by_pipe_redirect("git status", "git status"));
+    }
+
+    #[test]
+    fn test_find_corrections_skips_inline_scripts() {
+        let commands = vec![
+            CommandExecution {
+                command: r#"python -c "import numpy; print(numpy.__version__)""#.to_string(),
+                is_error: true,
+                output: "error: ModuleNotFoundError: No module named 'numpy'".to_string(),
+            },
+            CommandExecution {
+                command: r#"python -c "import scipy; print(scipy.__version__)""#.to_string(),
+                is_error: false,
+                output: "1.9.0".to_string(),
+            },
+        ];
+
+        let corrections = find_corrections(&commands);
+        assert_eq!(corrections.len(), 0);
+    }
+
+    #[test]
+    fn test_find_corrections_skips_long_commands() {
+        let long_cmd = format!("python -c \"{}\"", "x = 1; ".repeat(50));
+        let long_cmd2 = format!("python -c \"{}\"", "y = 2; ".repeat(50));
+        let commands = vec![
+            CommandExecution {
+                command: long_cmd,
+                is_error: true,
+                output: "error: invalid syntax".to_string(),
+            },
+            CommandExecution {
+                command: long_cmd2,
+                is_error: false,
+                output: "ok".to_string(),
+            },
+        ];
+
+        let corrections = find_corrections(&commands);
+        assert_eq!(corrections.len(), 0);
+    }
+
+    #[test]
+    fn test_find_corrections_skips_pipe_redirect_changes() {
+        let commands = vec![
+            CommandExecution {
+                command: "npx vite build 2>&1".to_string(),
+                is_error: true,
+                output: "error: Exit code 2".to_string(),
+            },
+            CommandExecution {
+                command: "npx vite build 2>&1 | tail -10".to_string(),
+                is_error: false,
+                output: "build output here".to_string(),
+            },
+        ];
+
+        let corrections = find_corrections(&commands);
+        assert_eq!(corrections.len(), 0);
+    }
+
+    #[test]
+    fn test_find_corrections_still_catches_real_typos() {
+        let commands = vec![
+            CommandExecution {
+                command: "git commit --ammend".to_string(),
+                is_error: true,
+                output: "error: unexpected argument '--ammend'".to_string(),
+            },
+            CommandExecution {
+                command: "git commit --amend".to_string(),
+                is_error: false,
+                output: "[main abc123] Fix bug".to_string(),
+            },
+        ];
+
+        let corrections = find_corrections(&commands);
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(corrections[0].wrong_command, "git commit --ammend");
+        assert_eq!(corrections[0].right_command, "git commit --amend");
     }
 
     #[test]

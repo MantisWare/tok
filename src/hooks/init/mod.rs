@@ -2378,6 +2378,259 @@ pub fn run_copilot(verbose: u8) -> Result<()> {
     Ok(())
 }
 
+// ─── Agent detection for welcome screen ───────────────────────────────
+
+/// Installation status for a single agent.
+pub struct AgentStatus {
+    pub name: &'static str,
+    pub installed: bool,
+    pub detail: String,
+}
+
+/// Detect installation status for all supported agents.
+/// Used by the welcome screen (`tok` with no args) and `tok init --show`.
+pub fn detect_agent_statuses() -> Vec<AgentStatus> {
+    vec![
+        detect_claude(),
+        detect_cursor(),
+        detect_codex(),
+        detect_gemini(),
+        detect_opencode(),
+        detect_windsurf(),
+        detect_cline(),
+        detect_copilot(),
+    ]
+}
+
+fn detect_claude() -> AgentStatus {
+    let installed = resolve_claude_dir()
+        .map(|d| d.join(HOOKS_SUBDIR).join(REWRITE_HOOK_FILE))
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    let detail = if installed {
+        format!(
+            "~/{}/{}/{}",
+            super::constants::CLAUDE_DIR,
+            HOOKS_SUBDIR,
+            REWRITE_HOOK_FILE
+        )
+    } else {
+        "not installed".to_string()
+    };
+    AgentStatus {
+        name: "Claude Code",
+        installed,
+        detail,
+    }
+}
+
+fn detect_cursor() -> AgentStatus {
+    let installed = resolve_cursor_dir()
+        .map(|d| d.join(HOOKS_SUBDIR).join(REWRITE_HOOK_FILE))
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    let detail = if installed {
+        format!(
+            "~/{}/{}/{}",
+            super::constants::CURSOR_DIR,
+            HOOKS_SUBDIR,
+            REWRITE_HOOK_FILE
+        )
+    } else {
+        "not installed".to_string()
+    };
+    AgentStatus {
+        name: "Cursor",
+        installed,
+        detail,
+    }
+}
+
+fn detect_codex() -> AgentStatus {
+    let installed = resolve_codex_dir()
+        .ok()
+        .map(|d| d.join("AGENTS.md"))
+        .and_then(|p| fs::read_to_string(p).ok())
+        .map(|c| c.contains("@TOK.md"))
+        .unwrap_or(false);
+    let detail = if installed {
+        format!("~/{}/AGENTS.md", super::constants::CODEX_DIR)
+    } else {
+        "not installed".to_string()
+    };
+    AgentStatus {
+        name: "Codex",
+        installed,
+        detail,
+    }
+}
+
+fn detect_gemini() -> AgentStatus {
+    let installed = resolve_gemini_dir()
+        .map(|d| d.join(HOOKS_SUBDIR).join(GEMINI_HOOK_FILE))
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    let detail = if installed {
+        format!(
+            "~/{}/{}/{}",
+            super::constants::GEMINI_DIR,
+            HOOKS_SUBDIR,
+            GEMINI_HOOK_FILE
+        )
+    } else {
+        "not installed".to_string()
+    };
+    AgentStatus {
+        name: "Gemini CLI",
+        installed,
+        detail,
+    }
+}
+
+fn detect_opencode() -> AgentStatus {
+    let installed = user_opencode_plugin_path()
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    let detail = if installed {
+        format!("~/{}", super::constants::OPENCODE_PLUGIN_PATH)
+    } else {
+        "not installed".to_string()
+    };
+    AgentStatus {
+        name: "OpenCode",
+        installed,
+        detail,
+    }
+}
+
+fn detect_windsurf() -> AgentStatus {
+    let path = PathBuf::from(".windsurfrules");
+    let installed = fs::read_to_string(&path)
+        .map(|c| c.contains("TOK") || c.contains("tok"))
+        .unwrap_or(false);
+    let detail = if installed {
+        ".windsurfrules".to_string()
+    } else {
+        "not installed (project-local)".to_string()
+    };
+    AgentStatus {
+        name: "Windsurf",
+        installed,
+        detail,
+    }
+}
+
+fn detect_cline() -> AgentStatus {
+    let path = PathBuf::from(".clinerules");
+    let installed = fs::read_to_string(&path)
+        .map(|c| c.contains("TOK") || c.contains("tok"))
+        .unwrap_or(false);
+    let detail = if installed {
+        ".clinerules".to_string()
+    } else {
+        "not installed (project-local)".to_string()
+    };
+    AgentStatus {
+        name: "Cline",
+        installed,
+        detail,
+    }
+}
+
+fn detect_copilot() -> AgentStatus {
+    let path = PathBuf::from(".github/copilot-instructions.md");
+    let installed = fs::read_to_string(&path)
+        .map(|c| c.contains("tok"))
+        .unwrap_or(false);
+    let detail = if installed {
+        ".github/copilot-instructions.md".to_string()
+    } else {
+        "not installed (project-local)".to_string()
+    };
+    AgentStatus {
+        name: "Copilot",
+        installed,
+        detail,
+    }
+}
+
+// ─── Global init (all agents) ─────────────────────────────────────────
+
+/// Install TOK hooks for all supported agents in one shot.
+/// Errors per agent are reported as warnings; the run continues.
+pub fn run_all(verbose: u8) -> Result<()> {
+    println!("Installing TOK for all supported agents...\n");
+
+    let mut ok = 0u8;
+    let mut failed = 0u8;
+
+    macro_rules! try_agent {
+        ($label:expr, $body:expr) => {
+            match $body {
+                Ok(()) => ok += 1,
+                Err(e) => {
+                    eprintln!("  [warn] {}: {:#}", $label, e);
+                    failed += 1;
+                }
+            }
+        };
+    }
+
+    // Claude Code (global, auto-patch)
+    try_agent!(
+        "Claude Code",
+        run(
+            true,  // global
+            true,  // install_claude
+            false, // install_opencode (handled separately)
+            false, // install_cursor (handled separately)
+            false, // install_windsurf (handled separately)
+            false, // install_cline (handled separately)
+            false, // claude_md
+            false, // hook_only
+            false, // codex (handled separately)
+            PatchMode::Auto,
+            verbose,
+        )
+    );
+
+    // Cursor (global)
+    try_agent!("Cursor", install_cursor_hooks(verbose));
+
+    // Codex (global)
+    try_agent!("Codex", run_codex_mode(true, verbose));
+
+    // Gemini CLI (global, auto-patch)
+    try_agent!(
+        "Gemini CLI",
+        run_gemini(true, false, PatchMode::Auto, verbose)
+    );
+
+    // OpenCode (global)
+    try_agent!("OpenCode", run_opencode_only_mode(verbose));
+
+    // Copilot (project-local)
+    try_agent!("Copilot", run_copilot(verbose));
+
+    // Windsurf (project-local)
+    try_agent!("Windsurf", run_windsurf_mode(verbose));
+
+    // Cline (project-local)
+    try_agent!("Cline", run_cline_mode(verbose));
+
+    println!();
+    if failed == 0 {
+        println!("All {} agents configured successfully.", ok);
+    } else {
+        println!(
+            "{} agents configured, {} failed (see warnings above).",
+            ok, failed
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
