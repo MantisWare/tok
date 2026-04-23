@@ -49,32 +49,34 @@ class Tok < Formula
 
     CAVEATS
     .chomp + "\n" + <<~EOS
-      tok #{version} — Token Optimization Kit
+
+      T O K  v#{version} — Token Optimization Kit
       Squeeze noisy CLI output before it hits your LLM
 
-    ── Quick Start ─────────────────────────────────────
+      Author: MantisWare (Waldo Marais)
 
-      # 1. Install for your AI tool
+    ── Setup ───────────────────────────────────────────
+
       tok init -g                  # Claude Code (recommended)
-      tok init -g --gemini         # Gemini CLI
-      tok init -g --codex          # Codex (OpenAI)
       tok init -g --agent cursor   # Cursor
+      tok init -g --gemini         # Gemini CLI
+      tok init --codex             # Codex CLI
+      tok init -g --opencode       # OpenCode
+      tok init --copilot           # GitHub Copilot
+      tok init --all               # ALL agents at once
 
-      # 2. Restart your AI tool, then test
-      tok --version                # Verify installation
-      tok gain                     # View token savings
+    ── Usage ───────────────────────────────────────────
 
-    ── What It Does ──────────────────────────────────
+      tok <command>                # Any command — auto-filtered
+      tok git status               # Git without the wall of text
+      tok cargo test               # Test output, failures only
+      tok gain                     # Token savings stats
+      tok gain --graph             # ASCII graph of daily savings
+      tok discover                 # Find missed TOK opportunities
+      tok proxy <cmd>              # Passthrough (still tracks stats)
+      tok --help                   # All commands and flags
 
-      tok sits between your shell and your LLM, filtering
-      command output for 60-90% token savings:
-
-      tok git status          # Compact status
-      tok cargo test          # Failures only (-90%)
-      tok ls .                # Token-optimized tree
-      tok grep "pattern" .    # Grouped results
-
-    ── Resources ─────────────────────────────────────
+    ── Resources ───────────────────────────────────────
 
       Docs:   https://github.com/MantisWare/tok
       Help:   tok --help

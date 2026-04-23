@@ -1202,32 +1202,7 @@ pub(crate) enum GtCommands {
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn print_version_banner() {
-    if !std::io::stdout().is_terminal() {
-        println!("tok {VERSION}");
-        return;
-    }
-
-    let t = |s: &str| s.bright_cyan();
-    let o = |s: &str| s.blue();
-    let k = |s: &str| s.bright_yellow();
-
-    println!("{}{}{}", t("  ████████╗"), o("  ██████╗ "), k("  ██╗  ██╗"));
-    println!("{}{}{}", t("  ╚══██╔══╝"), o(" ██╔═══██╗"), k("  ██║ ██╔╝"));
-    println!("{}{}{}", t("     ██║   "), o(" ██║   ██║"), k("  █████╔╝ "));
-    println!("{}{}{}", t("     ██║   "), o(" ██║   ██║"), k("  ██╔═██╗ "));
-    println!("{}{}{}", t("     ██║   "), o("  ╚████╔╝ "), k("  ██║  ██╗"));
-    println!("{}{}{}", t("     ╚═╝   "), o("  ╚═══╝  "), k("  ╚═╝  ╚═╝"));
-    println!();
-    println!(
-        "  {} {} {}",
-        "tok".bright_cyan().bold(),
-        VERSION.bright_white().bold(),
-        "— Token Optimization Kit".bright_black()
-    );
-    println!(
-        "  {}",
-        "Squeeze noisy CLI output before it hits your LLM".bright_black()
-    );
+    print_welcome_screen();
 }
 
 fn print_welcome_screen() {
