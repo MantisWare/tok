@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use colored::Colorize;
 
 use crate::{
     AgentTarget, CargoCommands, Cli, Commands, ComposeCommands, DockerCommands, DotnetCommands,
@@ -903,13 +904,46 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
             let stderr = String::from_utf8_lossy(&stderr_bytes);
             let full_output = format!("{}{}", stdout, stderr);
 
-            // Track usage (input = output since no filtering)
-            timer.track(
-                &format!("{} {}", cmd_name, cmd_args.join(" ")),
-                &format!("tok proxy {} {}", cmd_name, cmd_args.join(" ")),
-                &full_output,
-                &full_output,
-            );
+            // If security is enabled, apply obfuscation to the tracked output
+            let security_enabled = cli.security
+                || (!cli.no_security && {
+                    let cfg = crate::core::config::Config::load().unwrap_or_default();
+                    cfg.security.enabled
+                });
+
+            if security_enabled {
+                let cfg = crate::core::config::Config::load().unwrap_or_default();
+                let mode = crate::security::config::resolve_security_mode(
+                    &cfg.security,
+                    cli.security_mode.as_deref(),
+                );
+                let sec_result =
+                    crate::security::process_input(&full_output, &cfg.security, &cfg.slm, mode);
+
+                timer.track(
+                    &format!("{} {}", cmd_name, cmd_args.join(" ")),
+                    &format!("tok proxy {} {}", cmd_name, cmd_args.join(" ")),
+                    &full_output,
+                    &sec_result.sanitized_text,
+                );
+
+                if cli.verbose > 0 && sec_result.findings_count > 0 {
+                    let report = crate::security::report::build_report(
+                        &mode.to_string(),
+                        &sec_result.map,
+                        0,
+                    );
+                    eprintln!("\n{}", crate::security::report::format_report(&report));
+                }
+            } else {
+                // Track usage (input = output since no filtering)
+                timer.track(
+                    &format!("{} {}", cmd_name, cmd_args.join(" ")),
+                    &format!("tok proxy {} {}", cmd_name, cmd_args.join(" ")),
+                    &full_output,
+                    &full_output,
+                );
+            }
 
             crate::core::utils::exit_code_from_status(&status, &cmd_name)
         }
@@ -940,6 +974,64 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
         }
 
         Commands::Mem { command } => crate::cmds::mem::dispatch_mem(command)?,
+
+        Commands::SecurityInspect { file, report } => {
+            use crate::security;
+            let config = crate::core::config::Config::load().unwrap_or_default();
+            let mode = security::config::resolve_security_mode(
+                &config.security,
+                cli.security_mode.as_deref(),
+            );
+
+            let text = if file == Path::new("-") {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin().read_to_string(&mut buf)?;
+                buf
+            } else {
+                std::fs::read_to_string(&file)
+                    .context(format!("Failed to read file: {}", file.display()))?
+            };
+
+            let findings = security::scanner::scan(&text, &config.security);
+
+            if report || cli.verbose > 0 {
+                let classified =
+                    security::policy::classify(&findings, mode, &config.security.actions);
+                let overall = security::policy::overall_severity(&classified);
+
+                println!("{}", "TOK Security Inspect".bold());
+                println!();
+                println!("  Mode:     {}", mode);
+                println!("  Findings: {}", findings.len());
+                println!("  Severity: {:?}", overall);
+                println!();
+
+                for (i, cf) in classified.iter().enumerate() {
+                    println!(
+                        "  {}. [{}] {:?} (confidence: {:.0}%, action: {:?})",
+                        i + 1,
+                        format!("{:?}", cf.finding.entity_type).to_lowercase(),
+                        "***REDACTED***",
+                        cf.finding.confidence * 100.0,
+                        cf.action,
+                    );
+                }
+            } else {
+                println!("{} finding(s) detected", findings.len());
+            }
+            0
+        }
+
+        Commands::Doctor { slm } => {
+            if slm {
+                let config = crate::core::config::Config::load().unwrap_or_default();
+                crate::security::slm::doctor::run(&config.slm)?;
+            } else {
+                println!("tok doctor: use --slm to check SLM runtime health");
+            }
+            0
+        }
     };
     Ok(code)
 }

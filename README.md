@@ -198,9 +198,23 @@ tok summary <long command>      # Heuristic summary
 tok proxy <command>             # Raw passthrough + tracking
 ```
 
+### Security & Privacy
+```bash
+tok security-inspect file.txt            # Scan file for sensitive data (dry-run)
+tok security-inspect file.txt --report   # Detailed report with entity types
+echo "text" | tok security-inspect -     # Scan from stdin
+tok doctor --slm                         # Check SLM runtime health
+
+# Global flags (work with any command)
+tok --security proxy git status          # Obfuscate sensitive data in output
+tok --security --security-mode strict proxy cargo test
+tok --no-security proxy echo "raw"       # Force disable security
+tok --slm --security proxy git log       # Use local SLM for semantic detection
+```
+
 ### Token Savings Analytics
 ```bash
-tok gain                        # Summary stats
+tok gain                        # Summary stats + estimated cost saved
 tok gain --graph                # ASCII graph (last 30 days)
 tok gain --history              # Recent command history
 tok gain --daily                # Day-by-day breakdown
@@ -217,7 +231,181 @@ tok session                     # Show TOK adoption across recent sessions
 ```bash
 -u, --ultra-compact    # ASCII icons, inline format (extra token savings)
 -v, --verbose          # Increase verbosity (-v, -vv, -vvv)
+--security             # Enable security/privacy layer
+--no-security          # Disable security (overrides config)
+--security-mode <m>    # observe | balanced | strict | developer
+--slm                  # Enable local SLM semantic scanning
+--no-slm               # Disable SLM (overrides config)
 ```
+
+## Optional Security Mode
+
+TOK can optionally scan and obfuscate sensitive data (PII, secrets, credentials) before it reaches your LLM context. The security layer **never blocks** -- it always obfuscates and continues. Your workflow is never interrupted.
+
+### Enabling Security
+
+**Per-command** (via CLI flag):
+```bash
+tok --security proxy git status
+tok --security --security-mode strict proxy cargo test
+```
+
+**Permanently** (via config at `~/.config/tok/config.toml`):
+```toml
+[security]
+enabled = true
+mode = "balanced"
+```
+
+**Disabling** (override config for one command):
+```bash
+tok --no-security proxy echo "raw output"
+```
+
+### Security Modes
+
+| Mode | Behavior |
+|------|----------|
+| `observe` | Scan and report only. No text modification. Useful for onboarding. |
+| `balanced` | Obfuscate common PII and secrets per config. Recommended default. |
+| `strict` | Obfuscate everything detected, regardless of per-entity config. |
+| `developer` | Preserve code, stack traces, filenames, and URLs. Obfuscate secrets and internal identifiers only. |
+
+### What Gets Detected
+
+**PII** (regex-based):
+- Email addresses (`john@example.com` → `{{TOK_EMAIL_001}}`)
+- Phone numbers (`555-123-4567` → `{{TOK_PHONE_001}}`)
+- IP addresses (`192.168.1.100` → `{{TOK_IP_001}}`, excludes `127.0.0.1`)
+- Internal hostnames (`db-prod-01.internal` → `{{TOK_HOST_001}}`)
+- URLs (`https://internal.api.com/v2` → `{{TOK_URL_001}}`)
+- Money values (`$45,000` → `{{TOK_MONEY_001}}`)
+
+**Secrets** (pattern-based, high confidence):
+- API keys — Stripe (`sk_live_`), GitHub (`ghp_`, `github_pat_`), AWS (`AKIA`), OpenAI (`sk-`), Slack (`xoxb-`)
+- JWT tokens (three-part base64url format)
+- Private keys (`-----BEGIN RSA PRIVATE KEY-----`)
+- Password assignments (`password=`, `DB_PASSWORD:`)
+- Database URLs (`postgres://user:pass@host/db`)
+- Credit card numbers (Luhn-validated, 13-19 digits)
+
+### How It Works
+
+```
+Input text → Scanner → Classifier → Obfuscation → TOK Optimizer → Output
+                                         ↓
+                              In-memory map (never persisted)
+                                         ↓
+                          Response → Restoration → Final output
+```
+
+1. **Scanner** detects sensitive entities using regex + pattern matching
+2. **Classifier** assigns severity (low/medium/high/critical) for reporting only
+3. **Obfuscation** replaces values with `{{TOK_TYPE_NNN}}` placeholders
+4. The placeholder map exists only in process memory -- never written to disk or sent externally
+5. Responses are restored automatically using the local map
+
+### Inspect Command
+
+Scan text without modifying it. Shows what would be detected and at what confidence:
+
+```bash
+tok security-inspect ./prompt.txt --report
+```
+
+Output:
+```
+TOK Security Inspect
+
+  Mode:     balanced
+  Findings: 3
+  Severity: High
+
+  1. [email] "***REDACTED***" (confidence: 95%, action: Placeholder)
+  2. [money] "***REDACTED***" (confidence: 90%, action: Placeholder)
+  3. [apikey] "***REDACTED***" (confidence: 95%, action: Placeholder)
+```
+
+Supports stdin: `echo "text" | tok security-inspect - --report`
+
+### Security Report (Verbose Mode)
+
+When using `--security -v`, TOK prints a summary after command execution:
+
+```
+TOK Security Report
+
+  Security: enabled
+  Mode:     balanced
+  Risk:     high
+
+  Obfuscated: 4 sensitive values
+    - apikey: 1
+    - email: 2
+    - hostname: 1
+```
+
+### Optional Local SLM
+
+For semantic detection beyond regex (person names, company names, internal project names), TOK can use a local Small Language Model via embedded llama.cpp:
+
+```bash
+tok --security --slm proxy git log     # Enable SLM scanning
+tok doctor --slm                       # Check SLM binary + model health
+```
+
+The SLM runs entirely on your machine (`127.0.0.1` only), is optional, and disabled by default. Deterministic scanner results always take precedence over SLM findings.
+
+Configure in `~/.config/tok/config.toml`:
+```toml
+[slm]
+enabled = true
+runtime = "embedded-llamacpp"
+model_path = "./models/tok-security-slm/model.gguf"
+context_size = 8192
+temperature = 0.1
+```
+
+Recommended model: **Qwen3-4B-Instruct GGUF Q4_K_M** (~2.5 GB).
+
+### Configuration Reference
+
+Full security config options in `~/.config/tok/config.toml`:
+
+```toml
+[security]
+enabled = false
+mode = "balanced"  # observe | balanced | strict | developer
+
+[security.scan]
+deterministic = true   # Regex + pattern scanning (always recommended)
+slm = false            # Optional SLM semantic scanning
+
+[security.actions]
+# Per-entity action: "placeholder" (obfuscate) or "allow" (leave untouched)
+email = "placeholder"
+phone = "placeholder"
+url = "placeholder"
+hostname = "placeholder"
+ip_address = "placeholder"
+money = "placeholder"
+api_key = "placeholder"
+jwt = "placeholder"
+private_key = "placeholder"
+password = "placeholder"
+database_url = "placeholder"
+credit_card = "placeholder"
+
+[security.restore]
+enabled = true         # Restore placeholders in responses
+exact = true           # Exact string matching for restoration
+
+[security.logging]
+store_original_prompts = false   # Never log original sensitive text
+redact_logs = true               # Redact sensitive values from all log output
+```
+
+See [docs/SECURITY_LAYER.md](docs/SECURITY_LAYER.md) and [docs/SLM_RUNTIME.md](docs/SLM_RUNTIME.md) for complete documentation.
 
 ## Examples
 
@@ -443,6 +631,8 @@ cargo uninstall tok          # Remove binary
 - **[RELEASE.md](docs/contributing/RELEASE.md)** - Stable releases, Homebrew tap, maintainer checklist
 - **[ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)** - Technical architecture
 - **[SECURITY.md](SECURITY.md)** - Security policy and PR review process
+- **[SECURITY_LAYER.md](docs/SECURITY_LAYER.md)** - Optional security/privacy obfuscation layer
+- **[SLM_RUNTIME.md](docs/SLM_RUNTIME.md)** - Local SLM (llama.cpp) setup guide
 - **[AUDIT_GUIDE.md](docs/AUDIT_GUIDE.md)** - Token savings analytics guide
 
 ## Privacy & Telemetry

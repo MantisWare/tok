@@ -131,6 +131,8 @@ mod test_read;
 mod test_rewrite;
 #[path = "cli/test_ruby.rs"]
 mod test_ruby;
+#[path = "cli/test_security.rs"]
+mod test_security;
 #[path = "cli/test_session.rs"]
 mod test_session;
 #[path = "cli/test_smart.rs"]

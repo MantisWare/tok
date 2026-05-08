@@ -2,7 +2,7 @@
 
 use crate::core::display_helpers::{format_duration, print_period_table};
 use crate::core::tracking::{DayStats, MonthStats, Tracker, WeekStats};
-use crate::core::utils::format_tokens;
+use crate::core::utils::{format_tokens, format_usd};
 use crate::hooks::hook_check;
 use anyhow::{Context, Result};
 use chrono::Local;
@@ -10,6 +10,10 @@ use colored::Colorize;
 use serde::Serialize;
 use std::io::IsTerminal;
 use std::path::PathBuf;
+
+/// Blended average cost per million input tokens across popular LLM coding assistants.
+/// Based on: Claude Sonnet ~$3/MTok, GPT-4o ~$2.50/MTok, weighted toward Sonnet-class usage.
+const COST_PER_MILLION_TOKENS: f64 = 3.0;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -99,6 +103,15 @@ pub fn run(
                 "{} ({:.1}%)",
                 format_tokens(summary.total_saved),
                 summary.avg_savings_pct
+            ),
+        );
+        let cost_saved = estimate_cost_saved(summary.total_saved);
+        print_kpi(
+            "Est. cost saved",
+            format!(
+                "{} (~${:.2}/MTok avg)",
+                format_usd(cost_saved),
+                COST_PER_MILLION_TOKENS
             ),
         );
         print_kpi(
@@ -309,6 +322,11 @@ pub fn run(
 }
 
 // ── Display helpers (TTY-aware) ── // added: entire section
+
+/// Estimate dollar savings from saved tokens using blended LLM pricing.
+fn estimate_cost_saved(saved_tokens: usize) -> f64 {
+    saved_tokens as f64 * COST_PER_MILLION_TOKENS / 1_000_000.0
+}
 
 /// Format text with bold styling (TTY-aware). // added
 fn styled(text: &str, strong: bool) -> String {
@@ -552,6 +570,8 @@ struct ExportSummary {
     total_output: usize,
     total_saved: usize,
     avg_savings_pct: f64,
+    estimated_cost_saved_usd: f64,
+    cost_per_million_tokens: f64,
     total_time_ms: u64,
     avg_time_ms: u64,
 }
@@ -575,6 +595,8 @@ fn export_json(
             total_output: summary.total_output,
             total_saved: summary.total_saved,
             avg_savings_pct: summary.avg_savings_pct,
+            estimated_cost_saved_usd: estimate_cost_saved(summary.total_saved),
+            cost_per_million_tokens: COST_PER_MILLION_TOKENS,
             total_time_ms: summary.total_time_ms,
             avg_time_ms: summary.avg_time_ms,
         },

@@ -21,6 +21,10 @@ pub struct Config {
     pub hooks: HooksConfig,
     #[serde(default)]
     pub limits: LimitsConfig,
+    #[serde(default)]
+    pub security: crate::security::config::SecurityConfig,
+    #[serde(default)]
+    pub slm: crate::security::config::SlmConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

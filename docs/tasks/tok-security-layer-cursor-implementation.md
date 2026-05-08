@@ -1423,7 +1423,7 @@ Example:
 
 ```ts
 it("does not send original email or API key to provider when security is enabled", async () => {
-  const prompt = "Email john@example.com using key sk_live_123456.";
+  const prompt = "Email john@example.com using key sk_test_FAKE123.";
 
   const provider = createMockProvider();
 
@@ -1441,7 +1441,7 @@ it("does not send original email or API key to provider when security is enabled
   const sentPrompt = provider.getLastPrompt();
 
   expect(sentPrompt).not.toContain("john@example.com");
-  expect(sentPrompt).not.toContain("sk_live_123456");
+  expect(sentPrompt).not.toContain("sk_test_FAKE123");
   expect(sentPrompt).toContain("{{TOK_EMAIL_001}}");
 });
 ```

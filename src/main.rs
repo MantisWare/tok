@@ -7,6 +7,8 @@ mod hooks;
 mod learn;
 mod mem;
 mod parser;
+#[allow(dead_code)]
+mod security;
 
 // `crate::…` paths in `src/cmds/**` expect these at the crate root.
 pub(crate) use cmds::dotnet::{binlog, dotnet_format_report, dotnet_trx};
@@ -59,6 +61,26 @@ pub(crate) struct Cli {
     /// Pass SKIP_ENV_VALIDATION=1 to children (Next.js, tsc, linters, Prisma, …)
     #[arg(long = "skip-env", global = true)]
     skip_env: bool,
+
+    /// Enable security/privacy layer (obfuscate sensitive data)
+    #[arg(long = "security", global = true)]
+    security: bool,
+
+    /// Disable security/privacy layer (overrides config)
+    #[arg(long = "no-security", global = true, conflicts_with = "security")]
+    no_security: bool,
+
+    /// Security mode: observe, balanced, strict, developer
+    #[arg(long = "security-mode", global = true)]
+    security_mode: Option<String>,
+
+    /// Enable local SLM for semantic security scanning
+    #[arg(long = "slm", global = true)]
+    slm: bool,
+
+    /// Disable local SLM (overrides config)
+    #[arg(long = "no-slm", global = true, conflicts_with = "slm")]
+    no_slm: bool,
 }
 
 #[derive(Subcommand)]
@@ -690,6 +712,23 @@ pub(crate) enum Commands {
     Hook {
         #[command(subcommand)]
         command: HookCommands,
+    },
+
+    /// Inspect text for sensitive data (security dry-run)
+    #[command(name = "security-inspect")]
+    SecurityInspect {
+        /// File to inspect (use - for stdin)
+        file: PathBuf,
+        /// Show detailed report
+        #[arg(long)]
+        report: bool,
+    },
+
+    /// Check SLM runtime health and configuration
+    Doctor {
+        /// Check SLM runtime specifically
+        #[arg(long)]
+        slm: bool,
     },
 }
 
