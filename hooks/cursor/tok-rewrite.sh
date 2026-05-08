@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# tok-hook-version: 1
+# tok-hook-version: 2
 # TOK Cursor Agent hook — rewrites shell commands to use tok for token savings.
 # Works with both Cursor editor and cursor-cli (they share ~/.cursor/hooks.json).
 # Cursor preToolUse hook format: receives JSON on stdin, returns JSON on stdout.
-# Requires: tok >= 0.23.0, jq
+# Requires: tok, jq
 #
 # This is a thin delegating hook: all rewrite logic lives in `tok rewrite`,
 # which is the single source of truth (src/discover/registry.rs).
 # To add or change rewrite rules, edit the Rust registry — not this file.
+#
+# Exit code protocol for `tok rewrite`:
+#   0 + stdout  Rewrite found, no deny/ask rule matched → auto-allow
+#   1           No TOK equivalent → pass through unchanged
+#   2           Deny rule matched → pass through unchanged
+#   3 + stdout  Ask rule matched → rewrite but let the agent prompt the user
 
 if ! command -v jq &>/dev/null; then
   echo "[tok] WARNING: jq is not installed. Hook cannot rewrite commands. Install jq: https://jqlang.github.io/jq/download/" >&2
@@ -19,15 +25,10 @@ if ! command -v tok &>/dev/null; then
   exit 0
 fi
 
-# Version guard: tok rewrite was added in 0.23.0.
-TOK_VERSION=$(tok --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-if [ -n "$TOK_VERSION" ]; then
-  MAJOR=$(echo "$TOK_VERSION" | cut -d. -f1)
-  MINOR=$(echo "$TOK_VERSION" | cut -d. -f2)
-  if [ "$MAJOR" -eq 0 ] && [ "$MINOR" -lt 23 ]; then
-    echo "[tok] WARNING: tok $TOK_VERSION is too old (need >= 0.23.0). Upgrade: cargo install tok" >&2
-    exit 0
-  fi
+# Verify tok has the rewrite subcommand (added in 0.1.9).
+if ! tok rewrite --help &>/dev/null; then
+  echo "[tok] WARNING: tok $(tok --version 2>/dev/null) does not support 'rewrite'. Upgrade: cargo install tok" >&2
+  exit 0
 fi
 
 INPUT=$(cat)
@@ -38,15 +39,25 @@ if [ -z "$CMD" ]; then
   exit 0
 fi
 
-# Delegate all rewrite logic to the Rust binary.
-# tok rewrite exits 1 when there's no rewrite — hook passes through silently.
-REWRITTEN=$(tok rewrite "$CMD" 2>/dev/null) || { echo '{}'; exit 0; }
+# Delegate all rewrite + permission logic to the Rust binary.
+REWRITTEN=$(tok rewrite "$CMD" 2>/dev/null)
+RC=$?
 
-# No change — nothing to do.
-if [ "$CMD" = "$REWRITTEN" ]; then
-  echo '{}'
-  exit 0
-fi
+case $RC in
+  0)
+    # Rewrite found, no permission rules matched — safe to auto-allow.
+    [ "$CMD" = "$REWRITTEN" ] && { echo '{}'; exit 0; }
+    ;;
+  3)
+    # Ask rule matched — rewrite the command, allow it (Cursor handles
+    # its own permission model; there is no "ask" passthrough like Claude Code).
+    ;;
+  *)
+    # 1 = no TOK equivalent, 2 = deny, other = unexpected — pass through.
+    echo '{}'
+    exit 0
+    ;;
+esac
 
 jq -n --arg cmd "$REWRITTEN" '{
   "permission": "allow",

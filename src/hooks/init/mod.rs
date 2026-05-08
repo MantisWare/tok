@@ -25,6 +25,10 @@ const REWRITE_HOOK: &str = include_str!("../../../hooks/claude/tok-rewrite.sh");
 // Embedded Cursor hook script (preToolUse format)
 const CURSOR_REWRITE_HOOK: &str = include_str!("../../../hooks/cursor/tok-rewrite.sh");
 
+// Embedded Cursor sessionStart hook (injects tok awareness into conversation context)
+const CURSOR_SESSION_HOOK: &str = include_str!("../../../hooks/cursor/tok-session.sh");
+const SESSION_HOOK_FILE: &str = "tok-session.sh";
+
 // Embedded OpenCode plugin (auto-rewrite)
 const OPENCODE_PLUGIN: &str = include_str!("../../../hooks/opencode/tok.ts");
 
@@ -1593,39 +1597,57 @@ fn install_cursor_hooks(verbose: u8) -> Result<()> {
         )
     })?;
 
-    // 1. Write hook script
+    // 1. Write rewrite hook script
     let hook_path = hooks_dir.join(REWRITE_HOOK_FILE);
     let hook_changed = write_if_changed(&hook_path, CURSOR_REWRITE_HOOK, "Cursor hook", verbose)?;
+
+    // 2. Write session awareness hook script
+    let session_path = hooks_dir.join(SESSION_HOOK_FILE);
+    let session_changed = write_if_changed(
+        &session_path,
+        CURSOR_SESSION_HOOK,
+        "Cursor session hook",
+        verbose,
+    )?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).with_context(|| {
+        let mode = fs::Permissions::from_mode(0o755);
+        fs::set_permissions(&hook_path, mode.clone()).with_context(|| {
             format!(
                 "Failed to set Cursor hook permissions: {}",
                 hook_path.display()
             )
         })?;
+        fs::set_permissions(&session_path, mode).with_context(|| {
+            format!(
+                "Failed to set Cursor session hook permissions: {}",
+                session_path.display()
+            )
+        })?;
     }
 
-    // 2. Create or patch hooks.json
+    // 3. Create or patch hooks.json (preToolUse + sessionStart)
     let hooks_json_path = cursor_dir.join(HOOKS_JSON);
     let patched = patch_cursor_hooks_json(&hooks_json_path, verbose)?;
 
     // Report
-    let hook_status = if hook_changed {
+    let any_changed = hook_changed || session_changed;
+    let hook_status = if any_changed {
         "installed/updated"
     } else {
         "already up to date"
     };
     println!("\nCursor hook {} (global).\n", hook_status);
     println!("  Hook:       {}", hook_path.display());
+    println!("  Session:    {}", session_path.display());
     println!("  hooks.json: {}", hooks_json_path.display());
 
     if patched {
-        println!("  hooks.json: TOK preToolUse entry added");
+        println!("  hooks.json: TOK entries added (preToolUse + sessionStart)");
     } else {
-        println!("  hooks.json: TOK preToolUse entry already present");
+        println!("  hooks.json: TOK entries already present");
     }
 
     println!("  Cursor reloads hooks.json on its own — run `git status` to verify.\n");
@@ -1633,7 +1655,7 @@ fn install_cursor_hooks(verbose: u8) -> Result<()> {
     Ok(())
 }
 
-/// Patch ~/.cursor/hooks.json to add TOK preToolUse hook.
+/// Patch ~/.cursor/hooks.json to add TOK preToolUse + sessionStart hooks.
 /// Returns true if the file was modified.
 fn patch_cursor_hooks_json(path: &Path, verbose: u8) -> Result<bool> {
     let mut root = if path.exists() {
@@ -1649,16 +1671,35 @@ fn patch_cursor_hooks_json(path: &Path, verbose: u8) -> Result<bool> {
         serde_json::json!({ "version": 1 })
     };
 
-    // Check idempotency
-    if cursor_hook_already_present(&root) {
+    let has_rewrite = cursor_hook_entry_present(&root, "preToolUse", REWRITE_HOOK_FILE);
+    let has_session = cursor_hook_entry_present(&root, "sessionStart", SESSION_HOOK_FILE);
+
+    if has_rewrite && has_session {
         if verbose > 0 {
-            eprintln!("Cursor hooks.json: TOK hook already present");
+            eprintln!("Cursor hooks.json: all TOK entries already present");
         }
         return Ok(false);
     }
 
-    // Insert the TOK preToolUse entry
-    insert_cursor_hook_entry(&mut root);
+    if !has_rewrite {
+        insert_cursor_hook_array_entry(
+            &mut root,
+            "preToolUse",
+            serde_json::json!({
+                "command": format!("./hooks/{}", REWRITE_HOOK_FILE),
+                "matcher": "Shell"
+            }),
+        );
+    }
+    if !has_session {
+        insert_cursor_hook_array_entry(
+            &mut root,
+            "sessionStart",
+            serde_json::json!({
+                "command": format!("./hooks/{}", SESSION_HOOK_FILE)
+            }),
+        );
+    }
 
     // Backup if exists
     if path.exists() {
@@ -1678,27 +1719,27 @@ fn patch_cursor_hooks_json(path: &Path, verbose: u8) -> Result<bool> {
     Ok(true)
 }
 
-/// Check if TOK preToolUse hook is already present in Cursor hooks.json
-fn cursor_hook_already_present(root: &serde_json::Value) -> bool {
-    let hooks = match root
-        .get("hooks")
-        .and_then(|h| h.get("preToolUse"))
+/// Check if a TOK entry exists in a specific Cursor hooks.json event array.
+fn cursor_hook_entry_present(root: &serde_json::Value, event: &str, file_name: &str) -> bool {
+    root.get("hooks")
+        .and_then(|h| h.get(event))
         .and_then(|p| p.as_array())
-    {
-        Some(arr) => arr,
-        None => return false,
-    };
-
-    hooks.iter().any(|entry| {
-        entry
-            .get("command")
-            .and_then(|c| c.as_str())
-            .is_some_and(|cmd| cmd.contains(REWRITE_HOOK_FILE))
-    })
+        .is_some_and(|arr| {
+            arr.iter().any(|entry| {
+                entry
+                    .get("command")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|cmd| cmd.contains(file_name))
+            })
+        })
 }
 
-/// Insert TOK preToolUse entry into Cursor hooks.json
-fn insert_cursor_hook_entry(root: &mut serde_json::Value) {
+/// Insert an entry into a Cursor hooks.json event array.
+fn insert_cursor_hook_array_entry(
+    root: &mut serde_json::Value,
+    event: &str,
+    entry: serde_json::Value,
+) {
     let root_obj = match root.as_object_mut() {
         Some(obj) => obj,
         None => {
@@ -1708,7 +1749,6 @@ fn insert_cursor_hook_entry(root: &mut serde_json::Value) {
         }
     };
 
-    // Ensure version key
     root_obj.entry("version").or_insert(serde_json::json!(1));
 
     let hooks = root_obj
@@ -1717,32 +1757,31 @@ fn insert_cursor_hook_entry(root: &mut serde_json::Value) {
         .as_object_mut()
         .expect("hooks must be an object");
 
-    let pre_tool_use = hooks
-        .entry("preToolUse")
+    let arr = hooks
+        .entry(event)
         .or_insert_with(|| serde_json::json!([]))
         .as_array_mut()
-        .expect("preToolUse must be an array");
+        .expect("hook event array must be an array");
 
-    pre_tool_use.push(serde_json::json!({
-        "command": "./hooks/tok-rewrite.sh",
-        "matcher": "Shell"
-    }));
+    arr.push(entry);
 }
 
-/// Remove Cursor TOK artifacts: hook script + hooks.json entry
+/// Remove Cursor TOK artifacts: hook scripts + hooks.json entries
 fn remove_cursor_hooks(verbose: u8) -> Result<Vec<String>> {
     let cursor_dir = resolve_cursor_dir()?;
     let mut removed = Vec::new();
 
-    // 1. Remove hook script
-    let hook_path = cursor_dir.join(HOOKS_SUBDIR).join(REWRITE_HOOK_FILE);
-    if hook_path.exists() {
-        fs::remove_file(&hook_path)
-            .with_context(|| format!("Failed to remove Cursor hook: {}", hook_path.display()))?;
-        removed.push(format!("Cursor hook: {}", hook_path.display()));
+    // 1. Remove hook scripts
+    for file_name in [REWRITE_HOOK_FILE, SESSION_HOOK_FILE] {
+        let path = cursor_dir.join(HOOKS_SUBDIR).join(file_name);
+        if path.exists() {
+            fs::remove_file(&path)
+                .with_context(|| format!("Failed to remove Cursor hook: {}", path.display()))?;
+            removed.push(format!("Cursor hook: {}", path.display()));
+        }
     }
 
-    // 2. Remove TOK entry from hooks.json
+    // 2. Remove TOK entries from hooks.json
     let hooks_json_path = cursor_dir.join(HOOKS_JSON);
     if hooks_json_path.exists() {
         let content = fs::read_to_string(&hooks_json_path)
@@ -1750,7 +1789,8 @@ fn remove_cursor_hooks(verbose: u8) -> Result<Vec<String>> {
 
         if !content.trim().is_empty() {
             if let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&content) {
-                if remove_cursor_hook_from_json(&mut root) {
+                let removed_any = remove_cursor_hooks_from_json(&mut root);
+                if removed_any {
                     let backup_path = hooks_json_path.with_extension("json.bak");
                     fs::copy(&hooks_json_path, &backup_path).ok();
 
@@ -1758,10 +1798,10 @@ fn remove_cursor_hooks(verbose: u8) -> Result<Vec<String>> {
                         .context("Failed to serialize hooks.json")?;
                     atomic_write(&hooks_json_path, &serialized)?;
 
-                    removed.push("Cursor hooks.json: removed TOK entry".to_string());
+                    removed.push("Cursor hooks.json: removed TOK entries".to_string());
 
                     if verbose > 0 {
-                        eprintln!("Removed TOK hook from Cursor hooks.json");
+                        eprintln!("Removed TOK hooks from Cursor hooks.json");
                     }
                 }
             }
@@ -1771,27 +1811,36 @@ fn remove_cursor_hooks(verbose: u8) -> Result<Vec<String>> {
     Ok(removed)
 }
 
-/// Remove TOK preToolUse entry from Cursor hooks.json
-/// Returns true if entry was found and removed
-fn remove_cursor_hook_from_json(root: &mut serde_json::Value) -> bool {
-    let pre_tool_use = match root
-        .get_mut("hooks")
-        .and_then(|h| h.get_mut("preToolUse"))
-        .and_then(|p| p.as_array_mut())
-    {
-        Some(arr) => arr,
-        None => return false,
-    };
+/// Remove all TOK entries from Cursor hooks.json (preToolUse + sessionStart).
+/// Returns true if any entry was found and removed.
+fn remove_cursor_hooks_from_json(root: &mut serde_json::Value) -> bool {
+    let tok_files = [REWRITE_HOOK_FILE, SESSION_HOOK_FILE];
+    let events = ["preToolUse", "sessionStart"];
+    let mut any_removed = false;
 
-    let original_len = pre_tool_use.len();
-    pre_tool_use.retain(|entry| {
-        !entry
-            .get("command")
-            .and_then(|c| c.as_str())
-            .is_some_and(|cmd| cmd.contains(REWRITE_HOOK_FILE))
-    });
+    for event in events {
+        let arr = match root
+            .get_mut("hooks")
+            .and_then(|h| h.get_mut(event))
+            .and_then(|p| p.as_array_mut())
+        {
+            Some(a) => a,
+            None => continue,
+        };
 
-    pre_tool_use.len() < original_len
+        let before = arr.len();
+        arr.retain(|entry| {
+            !entry
+                .get("command")
+                .and_then(|c| c.as_str())
+                .is_some_and(|cmd| tok_files.iter().any(|f| cmd.contains(f)))
+        });
+        if arr.len() < before {
+            any_removed = true;
+        }
+    }
+
+    any_removed
 }
 
 /// Show current tok configuration
@@ -1989,12 +2038,31 @@ fn show_claude_config() -> Result<()> {
             println!("[--] Cursor hook: not found");
         }
 
+        let cursor_session = cursor_dir.join(HOOKS_SUBDIR).join(SESSION_HOOK_FILE);
+        if cursor_session.exists() {
+            println!(
+                "[ok] Cursor session hook: {} (awareness injector)",
+                cursor_session.display()
+            );
+        } else {
+            println!("[--] Cursor session hook: not found (run: tok init -g --agent cursor)");
+        }
+
         if cursor_hooks_json.exists() {
             let content = fs::read_to_string(&cursor_hooks_json)?;
             if !content.trim().is_empty() {
                 if let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if cursor_hook_already_present(&root) {
+                    let has_rewrite =
+                        cursor_hook_entry_present(&root, "preToolUse", REWRITE_HOOK_FILE);
+                    let has_session =
+                        cursor_hook_entry_present(&root, "sessionStart", SESSION_HOOK_FILE);
+                    if has_rewrite && has_session {
+                        println!(
+                            "[ok] Cursor hooks.json: TOK configured (preToolUse + sessionStart)"
+                        );
+                    } else if has_rewrite {
                         println!("[ok] Cursor hooks.json: TOK preToolUse configured");
+                        println!("[--] Cursor hooks.json: sessionStart missing (run: tok init -g --agent cursor)");
                     } else {
                         println!("[warn] Cursor hooks.json: exists but TOK not configured");
                         println!("    Run: tok init -g --agent cursor");
@@ -3200,7 +3268,7 @@ More notes
     // ─── Cursor hooks.json tests ───
 
     #[test]
-    fn test_cursor_hook_already_present_true() {
+    fn test_cursor_hook_entry_present_rewrite() {
         let json_content = serde_json::json!({
             "version": 1,
             "hooks": {
@@ -3210,17 +3278,57 @@ More notes
                 }]
             }
         });
-        assert!(cursor_hook_already_present(&json_content));
+        assert!(cursor_hook_entry_present(
+            &json_content,
+            "preToolUse",
+            REWRITE_HOOK_FILE
+        ));
+        assert!(!cursor_hook_entry_present(
+            &json_content,
+            "sessionStart",
+            SESSION_HOOK_FILE
+        ));
     }
 
     #[test]
-    fn test_cursor_hook_already_present_false_empty() {
+    fn test_cursor_hook_entry_present_session() {
+        let json_content = serde_json::json!({
+            "version": 1,
+            "hooks": {
+                "sessionStart": [{
+                    "command": "./hooks/tok-session.sh"
+                }]
+            }
+        });
+        assert!(cursor_hook_entry_present(
+            &json_content,
+            "sessionStart",
+            SESSION_HOOK_FILE
+        ));
+        assert!(!cursor_hook_entry_present(
+            &json_content,
+            "preToolUse",
+            REWRITE_HOOK_FILE
+        ));
+    }
+
+    #[test]
+    fn test_cursor_hook_entry_present_false_empty() {
         let json_content = serde_json::json!({ "version": 1 });
-        assert!(!cursor_hook_already_present(&json_content));
+        assert!(!cursor_hook_entry_present(
+            &json_content,
+            "preToolUse",
+            REWRITE_HOOK_FILE
+        ));
+        assert!(!cursor_hook_entry_present(
+            &json_content,
+            "sessionStart",
+            SESSION_HOOK_FILE
+        ));
     }
 
     #[test]
-    fn test_cursor_hook_already_present_false_other_hooks() {
+    fn test_cursor_hook_entry_present_false_other_hooks() {
         let json_content = serde_json::json!({
             "version": 1,
             "hooks": {
@@ -3230,13 +3338,24 @@ More notes
                 }]
             }
         });
-        assert!(!cursor_hook_already_present(&json_content));
+        assert!(!cursor_hook_entry_present(
+            &json_content,
+            "preToolUse",
+            REWRITE_HOOK_FILE
+        ));
     }
 
     #[test]
-    fn test_insert_cursor_hook_entry_empty() {
+    fn test_insert_cursor_hook_array_entry_empty() {
         let mut json_content = serde_json::json!({ "version": 1 });
-        insert_cursor_hook_entry(&mut json_content);
+        insert_cursor_hook_array_entry(
+            &mut json_content,
+            "preToolUse",
+            serde_json::json!({
+                "command": format!("./hooks/{}", REWRITE_HOOK_FILE),
+                "matcher": "Shell"
+            }),
+        );
 
         let hooks = json_content["hooks"]["preToolUse"].as_array().unwrap();
         assert_eq!(hooks.len(), 1);
@@ -3260,39 +3379,67 @@ More notes
             }
         });
 
-        insert_cursor_hook_entry(&mut json_content);
+        insert_cursor_hook_array_entry(
+            &mut json_content,
+            "preToolUse",
+            serde_json::json!({
+                "command": format!("./hooks/{}", REWRITE_HOOK_FILE),
+                "matcher": "Shell"
+            }),
+        );
 
         let pre_tool_use = json_content["hooks"]["preToolUse"].as_array().unwrap();
         assert_eq!(pre_tool_use.len(), 2);
         assert_eq!(pre_tool_use[0]["command"], "./hooks/other.sh");
         assert_eq!(pre_tool_use[1]["command"], "./hooks/tok-rewrite.sh");
 
-        // afterFileEdit should be preserved
         assert!(json_content["hooks"]["afterFileEdit"].is_array());
     }
 
     #[test]
-    fn test_remove_cursor_hook_from_json() {
+    fn test_insert_cursor_session_start_entry() {
+        let mut json_content = serde_json::json!({ "version": 1 });
+        insert_cursor_hook_array_entry(
+            &mut json_content,
+            "sessionStart",
+            serde_json::json!({
+                "command": format!("./hooks/{}", SESSION_HOOK_FILE)
+            }),
+        );
+
+        let arr = json_content["hooks"]["sessionStart"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["command"], "./hooks/tok-session.sh");
+    }
+
+    #[test]
+    fn test_remove_cursor_hooks_from_json() {
         let mut json_content = serde_json::json!({
             "version": 1,
             "hooks": {
                 "preToolUse": [
                     { "command": "./hooks/other.sh", "matcher": "Shell" },
                     { "command": "./hooks/tok-rewrite.sh", "matcher": "Shell" }
+                ],
+                "sessionStart": [
+                    { "command": "./hooks/tok-session.sh" }
                 ]
             }
         });
 
-        let removed = remove_cursor_hook_from_json(&mut json_content);
+        let removed = remove_cursor_hooks_from_json(&mut json_content);
         assert!(removed);
 
         let hooks = json_content["hooks"]["preToolUse"].as_array().unwrap();
         assert_eq!(hooks.len(), 1);
         assert_eq!(hooks[0]["command"], "./hooks/other.sh");
+
+        let session = json_content["hooks"]["sessionStart"].as_array().unwrap();
+        assert_eq!(session.len(), 0);
     }
 
     #[test]
-    fn test_remove_cursor_hook_not_present() {
+    fn test_remove_cursor_hooks_not_present() {
         let mut json_content = serde_json::json!({
             "version": 1,
             "hooks": {
@@ -3302,7 +3449,7 @@ More notes
             }
         });
 
-        let removed = remove_cursor_hook_from_json(&mut json_content);
+        let removed = remove_cursor_hooks_from_json(&mut json_content);
         assert!(!removed);
     }
 
@@ -3323,5 +3470,11 @@ More notes
         assert!(CURSOR_REWRITE_HOOK.contains("\"permission\": \"allow\""));
         assert!(CURSOR_REWRITE_HOOK.contains("\"updated_input\""));
         assert!(!CURSOR_REWRITE_HOOK.contains("hookSpecificOutput"));
+    }
+
+    #[test]
+    fn test_cursor_session_hook_outputs_additional_context() {
+        assert!(CURSOR_SESSION_HOOK.contains("additional_context"));
+        assert!(CURSOR_SESSION_HOOK.contains("tok gain"));
     }
 }

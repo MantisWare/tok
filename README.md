@@ -277,7 +277,7 @@ TOK supports 10 AI coding tools. Each integration transparently rewrites shell c
 | **Claude Code** | `tok init -g` | PreToolUse hook (bash) |
 | **GitHub Copilot (VS Code)** | `tok init -g --copilot` | PreToolUse hook (`tok hook copilot`) — transparent rewrite |
 | **GitHub Copilot CLI** | `tok init -g --copilot` | PreToolUse deny-with-suggestion (CLI limitation) |
-| **Cursor** | `tok init -g --agent cursor` | preToolUse hook (hooks.json) |
+| **Cursor** | `tok init -g --agent cursor` | preToolUse rewrite + sessionStart awareness (hooks.json) |
 | **Gemini CLI** | `tok init -g --gemini` | BeforeTool hook (`tok hook gemini`) |
 | **Codex** | `tok init -g --codex` | AGENTS.md + TOK.md instructions |
 | **Windsurf** | `tok init --agent windsurf` | .windsurfrules (project-scoped) |
@@ -313,7 +313,7 @@ The hook (`tok hook copilot`) auto-detects the format:
 tok init -g --agent cursor
 ```
 
-Creates `~/.cursor/hooks/tok-rewrite.sh` + patches `~/.cursor/hooks.json` with preToolUse matcher. Works with both Cursor editor and `cursor-agent` CLI.
+Creates `~/.cursor/hooks/tok-rewrite.sh` (command rewriting) + `~/.cursor/hooks/tok-session.sh` (AI awareness) and patches `~/.cursor/hooks.json` with both `preToolUse` and `sessionStart` entries. Works with both Cursor editor and `cursor-agent` CLI.
 
 ### Gemini CLI
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tok-hook-version: 3
 # TOK Claude Code hook — rewrites commands to use tok for token savings.
-# Requires: tok >= 0.23.0, jq
+# Requires: tok, jq
 #
 # This is a thin delegating hook: all rewrite logic lives in `tok rewrite`,
 # which is the single source of truth (src/discover/registry.rs).
@@ -23,17 +23,10 @@ if ! command -v tok &>/dev/null; then
   exit 0
 fi
 
-# Version guard: tok rewrite was added in 0.23.0.
-# Older binaries: warn once and exit cleanly (no silent failure).
-TOK_VERSION=$(tok --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-if [ -n "$TOK_VERSION" ]; then
-  MAJOR=$(echo "$TOK_VERSION" | cut -d. -f1)
-  MINOR=$(echo "$TOK_VERSION" | cut -d. -f2)
-  # Require >= 0.23.0
-  if [ "$MAJOR" -eq 0 ] && [ "$MINOR" -lt 23 ]; then
-    echo "[tok] WARNING: tok $TOK_VERSION is too old (need >= 0.23.0). Upgrade: cargo install tok" >&2
-    exit 0
-  fi
+# Verify tok has the rewrite subcommand (added in 0.1.9).
+if ! tok rewrite --help &>/dev/null; then
+  echo "[tok] WARNING: tok $(tok --version 2>/dev/null) does not support 'rewrite'. Upgrade: cargo install tok" >&2
+  exit 0
 fi
 
 INPUT=$(cat)

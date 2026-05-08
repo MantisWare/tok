@@ -938,6 +938,8 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
             }
             0
         }
+
+        Commands::Mem { command } => crate::cmds::mem::dispatch_mem(command)?,
     };
     Ok(code)
 }

@@ -5,6 +5,7 @@ mod core;
 mod discover;
 mod hooks;
 mod learn;
+mod mem;
 mod parser;
 
 // `crate::…` paths in `src/cmds/**` expect these at the crate root.
@@ -679,6 +680,12 @@ pub(crate) enum Commands {
         args: Vec<String>,
     },
 
+    /// Structural code memory — index, search, and analyze your codebase
+    Mem {
+        #[command(subcommand)]
+        command: MemCommands,
+    },
+
     /// stdin JSON hook handlers (Gemini, Copilot, …)
     Hook {
         #[command(subcommand)]
@@ -692,6 +699,232 @@ pub(crate) enum HookCommands {
     Gemini,
     /// Copilot preToolUse — same deal, different vendor
     Copilot,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum MemCommands {
+    /// Index a directory — extract symbols, relationships, and structure
+    Index {
+        /// Path to the directory to index
+        #[arg(default_value = ".")]
+        path: String,
+        /// Repository identifier (defaults to directory name)
+        #[arg(long)]
+        repo_id: Option<String>,
+        /// Git branch to associate with the index
+        #[arg(long, default_value = "main")]
+        branch: String,
+        /// Re-index only changed files (keep existing data)
+        #[arg(long)]
+        incremental: bool,
+        /// Wipe all existing data for this repo before indexing
+        #[arg(long)]
+        clear: bool,
+    },
+
+    /// Full-text search across indexed symbols (BM25 ranking)
+    Search {
+        /// Natural-language or keyword query
+        query: String,
+        /// Scope to a specific repository
+        #[arg(long)]
+        repo_id: Option<String>,
+        /// Filter by symbol kind (Function, Class, Struct, Trait, Interface, etc.)
+        #[arg(long)]
+        kind: Option<String>,
+        /// Max results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Find a symbol by exact or fuzzy name match
+    Find {
+        /// Symbol name (exact match by default)
+        name: String,
+        /// Enable fuzzy/substring matching
+        #[arg(long)]
+        fuzzy: bool,
+        /// Scope to a specific repository
+        #[arg(long)]
+        repo_id: Option<String>,
+        /// Filter by symbol kind
+        #[arg(long)]
+        kind: Option<String>,
+        /// Max results
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+    },
+
+    /// Show full context for a symbol (callers, callees, type refs)
+    Context {
+        /// Symbol name or ID
+        name: String,
+        /// Scope to a specific repository
+        #[arg(long)]
+        repo_id: Option<String>,
+    },
+
+    /// Analyze relationships by type (callers, callees, hierarchy, imports)
+    Relations {
+        /// Symbol name or ID
+        name: String,
+        /// Relationship type: find_callers, find_callees, class_hierarchy, imports, exporters, type_usages
+        #[arg(long, default_value = "find_callers")]
+        query_type: String,
+        /// Traversal depth
+        #[arg(long, default_value = "2")]
+        depth: u32,
+        /// Max results
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+        /// Scope to a specific repository
+        #[arg(long)]
+        repo_id: Option<String>,
+    },
+
+    /// Blast radius impact analysis — who breaks if this symbol changes?
+    Impact {
+        /// Symbol name or ID
+        name: String,
+        /// Direction: upstream, downstream, both
+        #[arg(long, default_value = "both")]
+        direction: String,
+        /// Traversal depth
+        #[arg(long, default_value = "3")]
+        depth: u32,
+        /// Max results
+        #[arg(short, long, default_value = "100")]
+        limit: usize,
+        /// Scope to a specific repository
+        #[arg(long)]
+        repo_id: Option<String>,
+    },
+
+    /// List all indexed repositories
+    Repos,
+
+    /// Show index statistics and health for a repository
+    Status {
+        /// Repository identifier (defaults to current directory name)
+        repo_id: Option<String>,
+    },
+
+    /// Remove an indexed repository from the memory database
+    Forget {
+        /// Repository identifier to remove
+        repo_id: String,
+    },
+
+    /// What changed in a time window — six scoring modes
+    Evolution {
+        /// Start of time window (ISO-8601, e.g. 2026-01-01T00:00:00Z)
+        #[arg(long)]
+        from: String,
+        /// End of time window (ISO-8601)
+        #[arg(long)]
+        to: String,
+        /// Scoring mode: compound, impact, novel, recent, directional, overview
+        #[arg(long, default_value = "compound")]
+        mode: String,
+        /// Repository identifier
+        #[arg(long)]
+        repo_id: Option<String>,
+        /// Max symbols to return
+        #[arg(long, default_value = "50")]
+        max_symbols: usize,
+    },
+
+    /// Full change history of a specific symbol
+    Timeline {
+        /// Symbol name
+        name: String,
+        /// Scope to a specific repository
+        #[arg(long)]
+        repo_id: Option<String>,
+    },
+
+    /// Session continuity — what changed since last session
+    Changes {
+        /// Last episode ID from previous session
+        #[arg(long)]
+        since_episode: Option<String>,
+        /// Last reference timestamp (ISO-8601 fallback)
+        #[arg(long)]
+        since_time: Option<String>,
+        /// Repository identifier
+        #[arg(long)]
+        repo_id: Option<String>,
+    },
+
+    /// Detect which symbols are affected by changed files
+    Detect {
+        /// Changed file paths (relative to repo root)
+        #[arg(required = true, num_args = 1..)]
+        files: Vec<String>,
+        /// Repository identifier
+        #[arg(long)]
+        repo_id: Option<String>,
+    },
+
+    /// Find most central symbols (highest connectivity)
+    Central {
+        /// Repository identifier
+        #[arg(long)]
+        repo_id: Option<String>,
+        /// Max results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Find bridge symbols connecting separate subgraphs
+    Bridges {
+        /// Repository identifier
+        #[arg(long)]
+        repo_id: Option<String>,
+        /// Max results
+        #[arg(short, long, default_value = "15")]
+        limit: usize,
+    },
+
+    /// Detect symbol communities (connected components)
+    Communities {
+        /// Repository identifier
+        #[arg(long)]
+        repo_id: Option<String>,
+        /// Minimum community size
+        #[arg(long, default_value = "3")]
+        min_size: usize,
+        /// Max communities to show
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+    },
+
+    /// Find symbols with zero inbound references (potential dead code)
+    #[command(name = "dead-code")]
+    DeadCode {
+        /// Repository identifier
+        #[arg(long)]
+        repo_id: Option<String>,
+        /// Include test symbols in results
+        #[arg(long)]
+        include_tests: bool,
+        /// Max results
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+    },
+
+    /// Estimate cyclomatic complexity for functions
+    Complexity {
+        /// Repository identifier
+        #[arg(long)]
+        repo_id: Option<String>,
+        /// Max results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Minimum complexity to report
+        #[arg(long, default_value = "5")]
+        min_complexity: u32,
+    },
 }
 
 #[derive(Subcommand)]

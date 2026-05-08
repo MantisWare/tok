@@ -1,6 +1,6 @@
 [package]
 name = "tok"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 authors = ["Patrick Szymkowiak"]
 description = "Token Optimization Kit - High-performance CLI proxy to minimize LLM token consumption"
@@ -10,6 +10,10 @@ repository = "https://github.com/MantisWare/tok"
 readme = "README.md"
 keywords = ["cli", "llm", "token", "filter", "productivity"]
 categories = ["command-line-utilities", "development-tools"]
+
+[features]
+default = []
+mem-ast = []
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
