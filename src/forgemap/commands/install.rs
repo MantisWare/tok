@@ -1,6 +1,5 @@
 //! `tok forgemap install` — install pre-commit hook and tool prompt files.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -51,10 +50,13 @@ fn install_pre_commit_hook(repo_root: &Path, verbose: bool) -> Result<()> {
     std::fs::write(&hook_path, &content)
         .with_context(|| format!("Failed to write pre-commit hook: {}", hook_path.display()))?;
 
-    // Make executable.
-    let mut perms = std::fs::metadata(&hook_path)?.permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&hook_path, perms)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&hook_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&hook_path, perms)?;
+    }
 
     if verbose {
         eprintln!("  {} pre-commit hook installed", "✓".green());
