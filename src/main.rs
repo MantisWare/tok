@@ -3,6 +3,7 @@ mod cli_dispatch;
 mod cmds;
 mod core;
 mod discover;
+mod forgemap;
 mod hooks;
 mod learn;
 mod mem;
@@ -708,6 +709,12 @@ pub(crate) enum Commands {
         command: MemCommands,
     },
 
+    /// Code-indexing and annotation engine — headers, manifests, wiki
+    Forgemap {
+        #[command(subcommand)]
+        command: ForgemapCommands,
+    },
+
     /// stdin JSON hook handlers (Gemini, Copilot, …)
     Hook {
         #[command(subcommand)]
@@ -963,6 +970,170 @@ pub(crate) enum MemCommands {
         /// Minimum complexity to report
         #[arg(long, default_value = "5")]
         min_complexity: u32,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum ForgemapCommands {
+    /// First-time annotation pass — inject ForgeMap headers into source files
+    Init {
+        /// Path to scan (file or directory)
+        #[arg(default_value = ".")]
+        path: String,
+        /// Repository root directory
+        #[arg(long)]
+        repo_root: Option<String>,
+        /// Glob patterns to exclude
+        #[arg(long, num_args = 1..)]
+        exclude: Vec<String>,
+        /// File extensions to include
+        #[arg(long, num_args = 1..)]
+        extensions: Vec<String>,
+        /// Preview changes without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Re-annotate already-annotated files
+        #[arg(long)]
+        force: bool,
+        /// Model ID for agent: line
+        #[arg(long, default_value = "forgemap-cli (no-llm)")]
+        model: String,
+        /// Session ID (auto-generated if omitted)
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+
+    /// Annotate only files missing a header
+    Update {
+        /// Path to scan
+        #[arg(default_value = ".")]
+        path: String,
+        /// Repository root directory
+        #[arg(long)]
+        repo_root: Option<String>,
+        /// Glob patterns to exclude
+        #[arg(long, num_args = 1..)]
+        exclude: Vec<String>,
+        /// File extensions to include
+        #[arg(long, num_args = 1..)]
+        extensions: Vec<String>,
+        /// Preview changes without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Model ID for agent: line
+        #[arg(long, default_value = "forgemap-cli (no-llm)")]
+        model: String,
+        /// Session ID (auto-generated if omitted)
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+
+    /// Coverage report — exit 1 if any files are unannotated
+    Check {
+        /// Path to scan
+        #[arg(default_value = ".")]
+        path: String,
+        /// Repository root directory
+        #[arg(long)]
+        repo_root: Option<String>,
+        /// Glob patterns to exclude
+        #[arg(long, num_args = 1..)]
+        exclude: Vec<String>,
+        /// File extensions to include
+        #[arg(long, num_args = 1..)]
+        extensions: Vec<String>,
+    },
+
+    /// Update exports:/used_by: only — never touches rules:/agent:/message:
+    Refresh {
+        /// Path to scan
+        #[arg(default_value = ".")]
+        path: String,
+        /// Repository root directory
+        #[arg(long)]
+        repo_root: Option<String>,
+        /// Glob patterns to exclude
+        #[arg(long, num_args = 1..)]
+        exclude: Vec<String>,
+        /// File extensions to include
+        #[arg(long, num_args = 1..)]
+        extensions: Vec<String>,
+        /// Preview changes without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Generate .forgemap project manifest at the repo root
+    Manifest {
+        /// Path to scan
+        #[arg(default_value = ".")]
+        path: String,
+        /// Repository root directory
+        #[arg(long)]
+        repo_root: Option<String>,
+        /// Glob patterns to exclude
+        #[arg(long, num_args = 1..)]
+        exclude: Vec<String>,
+        /// File extensions to include
+        #[arg(long, num_args = 1..)]
+        extensions: Vec<String>,
+        /// Preview changes without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Model ID for agent session
+        #[arg(long, default_value = "forgemap-cli (no-llm)")]
+        model: String,
+        /// Session ID (auto-generated if omitted)
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+
+    /// Emit per-file Obsidian vault or regenerate project wiki
+    Wiki {
+        #[command(subcommand)]
+        command: ForgemapWikiCommands,
+    },
+
+    /// Install pre-commit hook and tool prompt files
+    Install {
+        /// Tool prompt files to install (claude, cursor, copilot)
+        #[arg(long, num_args = 1.., default_values_t = vec!["claude".to_string(), "cursor".to_string()])]
+        tools: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum ForgemapWikiCommands {
+    /// Emit per-file Obsidian vault
+    Bootstrap {
+        /// Path to scan
+        #[arg(default_value = ".")]
+        path: String,
+        /// Output directory for the wiki vault
+        #[arg(long, default_value = "docs/wiki")]
+        out: String,
+        /// Repository root directory
+        #[arg(long)]
+        repo_root: Option<String>,
+        /// Glob patterns to exclude
+        #[arg(long, num_args = 1..)]
+        exclude: Vec<String>,
+        /// File extensions to include
+        #[arg(long, num_args = 1..)]
+        extensions: Vec<String>,
+    },
+
+    /// Regenerate narrative project wiki
+    Sync {
+        /// Path to scan
+        #[arg(default_value = ".")]
+        path: String,
+        /// Output file path
+        #[arg(long, default_value = "docs/forgemap-wiki.md")]
+        out: String,
+        /// Repository root directory
+        #[arg(long)]
+        repo_root: Option<String>,
     },
 }
 

@@ -624,6 +624,52 @@ tok init -g --uninstall     # Remove hook, TOK.md, settings.json entry
 cargo uninstall tok          # Remove binary
 ```
 
+## ForgeMap — Code Indexing and Annotation
+
+ForgeMap is a built-in code-indexing and annotation engine that injects machine-readable comment headers into source files, builds reverse dependency graphs, and generates project manifests. It implements the [CodeDNA](https://github.com/Larens94/codedna) protocol for inter-agent communication.
+
+**Why?** AI agents reading your codebase burn tokens re-discovering file relationships on every session. ForgeMap headers give agents instant context: exports, callers, rules, and provenance — without scanning the entire repo.
+
+### Quick Start
+
+```bash
+tok forgemap init src/       # Annotate all source files with ForgeMap headers
+tok forgemap check src/      # Verify annotation coverage (exit 1 if incomplete)
+tok forgemap refresh src/    # Update exports:/used_by: after code changes
+tok forgemap manifest .      # Generate .forgemap project manifest
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `tok forgemap init <path>` | First-time annotation pass (inject headers) |
+| `tok forgemap update <path>` | Annotate only files missing a header |
+| `tok forgemap check <path>` | Coverage report (exit 1 if incomplete) |
+| `tok forgemap refresh <path>` | Update `exports:`/`used_by:` only (structural refresh) |
+| `tok forgemap manifest [path]` | Generate `.forgemap` project manifest |
+| `tok forgemap wiki bootstrap [path]` | Emit per-file Obsidian vault |
+| `tok forgemap wiki sync [path]` | Regenerate narrative project wiki |
+| `tok forgemap install` | Install pre-commit hook + tool prompt files |
+
+### Common Flags
+
+| Flag | Description |
+|------|-------------|
+| `--repo-root <path>` | Repository root directory |
+| `--exclude <patterns...>` | Glob patterns to exclude |
+| `--extensions <exts...>` | File extensions to include |
+| `--dry-run` | Preview changes without writing |
+| `--force` | Re-annotate already-annotated files (init only) |
+| `--model <id>` | Model ID for `agent:` line |
+| `--tools <tools...>` | Tool prompts to install: `claude`, `cursor`, `copilot` |
+
+### Supported Languages
+
+Rust, TypeScript, JavaScript, Python, Go, Ruby, C#, Java — with language-aware comment prefixes (`//` or `#`).
+
+For the full protocol specification, see **[docs/FORGEMAP.md](docs/FORGEMAP.md)**.
+
 ## Documentation
 
 - **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Fix common issues
@@ -634,6 +680,7 @@ cargo uninstall tok          # Remove binary
 - **[SECURITY_LAYER.md](docs/SECURITY_LAYER.md)** - Optional security/privacy obfuscation layer
 - **[SLM_RUNTIME.md](docs/SLM_RUNTIME.md)** - Local SLM (llama.cpp) setup guide
 - **[AUDIT_GUIDE.md](docs/AUDIT_GUIDE.md)** - Token savings analytics guide
+- **[FORGEMAP.md](docs/FORGEMAP.md)** - ForgeMap code-indexing protocol specification
 
 ## Privacy & Telemetry
 

@@ -74,9 +74,12 @@ where
     let raw = format!("{}\n{}", stdout, stderr);
     let exit_code = exit_code_from_output(&output, tool_name);
 
-    // On failure, skip filtering and return early (e.g. psql error messages
-    // containing '|' would be misinterpreted by the table parser)
+    // On failure, skip filtering and return raw output on the correct streams
+    // so IDEs and AI agents can see full diagnostics.
     if opts.skip_filter_on_failure && exit_code != 0 {
+        if !stdout.trim().is_empty() {
+            println!("{}", stdout.trim());
+        }
         if !stderr.trim().is_empty() {
             eprintln!("{}", stderr.trim());
         }
@@ -84,7 +87,7 @@ where
             &format!("{} {}", tool_name, args_display),
             &format!("tok {} {}", tool_name, args_display),
             &raw,
-            stderr.as_ref(),
+            &raw,
         );
         return Ok(exit_code);
     }

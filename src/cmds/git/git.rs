@@ -1,12 +1,19 @@
 //! Filters git output — log, status, diff, and more — keeping just the essential info.
 
 use crate::core::config;
+use crate::core::tee;
 use crate::core::tracking;
 use crate::core::utils::{exit_code_from_output, exit_code_from_status, resolved_command};
 use std::process::Stdio;
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::process::Command;
+
+fn emit_tee_hint(raw: &str, slug: &str, exit_code: i32) {
+    if let Some(hint) = tee::tee_and_hint(raw, slug, exit_code) {
+        eprintln!("{}", hint);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum GitCommand {
@@ -89,9 +96,18 @@ fn run_diff(
         let output = cmd.output().context("Failed to run git diff")?;
 
         if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("{}", stderr);
-            return Ok(exit_code_from_output(&output, "git"));
+            let exit_code = exit_code_from_output(&output, "git");
+            if !stdout.trim().is_empty() {
+                println!("{}", stdout.trim());
+            }
+            if !stderr.trim().is_empty() {
+                eprintln!("{}", stderr.trim());
+            }
+            let raw = format!("{}\n{}", stdout, stderr);
+            emit_tee_hint(&raw, "git_diff", exit_code);
+            return Ok(exit_code);
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -120,17 +136,22 @@ fn run_diff(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stderr.trim().is_empty() {
-            eprint!("{}", stderr);
+        let exit_code = exit_code_from_output(&output, "git");
+        if !stat_stdout.trim().is_empty() {
+            println!("{}", stat_stdout.trim());
         }
-        let raw = stat_stdout.to_string();
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        let raw = format!("{}\n{}", stat_stdout, stderr);
+        emit_tee_hint(&raw, "git_diff", exit_code);
         timer.track(
             &format!("git diff {}", args.join(" ")),
             &format!("tok git diff {}", args.join(" ")),
             &raw,
             &raw,
         );
-        return Ok(exit_code_from_output(&output, "git"));
+        return Ok(exit_code);
     }
 
     if verbose > 0 {
@@ -198,9 +219,18 @@ fn run_show(
         }
         let output = cmd.output().context("Failed to run git show")?;
         if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("{}", stderr);
-            return Ok(exit_code_from_output(&output, "git"));
+            let exit_code = exit_code_from_output(&output, "git");
+            if !stdout.trim().is_empty() {
+                println!("{}", stdout.trim());
+            }
+            if !stderr.trim().is_empty() {
+                eprintln!("{}", stderr.trim());
+            }
+            let raw = format!("{}\n{}", stdout, stderr);
+            emit_tee_hint(&raw, "git_show", exit_code);
+            return Ok(exit_code);
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         if wants_blob_show {
@@ -238,9 +268,18 @@ fn run_show(
     }
     let summary_output = summary_cmd.output().context("Failed to run git show")?;
     if !summary_output.status.success() {
+        let stdout = String::from_utf8_lossy(&summary_output.stdout);
         let stderr = String::from_utf8_lossy(&summary_output.stderr);
-        eprintln!("{}", stderr);
-        return Ok(exit_code_from_output(&summary_output, "git"));
+        let exit_code = exit_code_from_output(&summary_output, "git");
+        if !stdout.trim().is_empty() {
+            println!("{}", stdout.trim());
+        }
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        let raw = format!("{}\n{}", stdout, stderr);
+        emit_tee_hint(&raw, "git_show", exit_code);
+        return Ok(exit_code);
     }
     let summary = String::from_utf8_lossy(&summary_output.stdout);
     println!("{}", summary.trim());
@@ -444,9 +483,18 @@ fn run_log(
     let output = cmd.output().context("Failed to run git log")?;
 
     if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("{}", stderr);
-        return Ok(exit_code_from_output(&output, "git"));
+        let exit_code = exit_code_from_output(&output, "git");
+        if !stdout.trim().is_empty() {
+            println!("{}", stdout.trim());
+        }
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        let raw = format!("{}\n{}", stdout, stderr);
+        emit_tee_hint(&raw, "git_log", exit_code);
+        return Ok(exit_code);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -756,17 +804,22 @@ fn run_status(args: &[String], verbose: u8, global_args: &[String]) -> Result<i3
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         if !output.status.success() {
-            if !stderr.trim().is_empty() {
-                eprint!("{}", stderr);
+            let exit_code = exit_code_from_output(&output, "git");
+            if !stdout.trim().is_empty() {
+                println!("{}", stdout.trim());
             }
-            let raw = stdout.to_string();
+            if !stderr.trim().is_empty() {
+                eprintln!("{}", stderr.trim());
+            }
+            let raw = format!("{}\n{}", stdout, stderr);
+            emit_tee_hint(&raw, "git_status", exit_code);
             timer.track(
                 &format!("git status {}", args.join(" ")),
                 &format!("tok git status {}", args.join(" ")),
                 &raw,
                 &raw,
             );
-            return Ok(exit_code_from_output(&output, "git"));
+            return Ok(exit_code);
         }
 
         if verbose > 0 || !stderr.is_empty() {
@@ -878,14 +931,16 @@ fn run_add(args: &[String], verbose: u8, global_args: &[String]) -> Result<i32> 
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
+        let exit_code = exit_code_from_output(&output, "git");
         eprintln!("FAILED: git add");
-        if !stderr.trim().is_empty() {
-            eprintln!("{}", stderr);
-        }
         if !stdout.trim().is_empty() {
-            eprintln!("{}", stdout);
+            println!("{}", stdout.trim());
         }
-        return Ok(exit_code_from_output(&output, "git"));
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        emit_tee_hint(&raw_output, "git_add", exit_code);
+        return Ok(exit_code);
     }
 
     Ok(0)
@@ -946,15 +1001,18 @@ fn run_commit(args: &[String], verbose: u8, global_args: &[String]) -> Result<i3
             &raw_output,
             "ok (nothing to commit)",
         );
-    } else {
-        if !stderr.trim().is_empty() {
-            eprint!("{}", stderr);
-        }
-        if !stdout.trim().is_empty() {
-            eprint!("{}", stdout);
-        }
-        timer.track(&original_cmd, "tok git commit", &raw_output, &raw_output);
         return Ok(exit_code_from_output(&output, "git"));
+    } else {
+        let exit_code = exit_code_from_output(&output, "git");
+        if !stdout.trim().is_empty() {
+            println!("{}", stdout.trim());
+        }
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        emit_tee_hint(&raw_output, "git_commit", exit_code);
+        timer.track(&original_cmd, "tok git commit", &raw_output, &raw_output);
+        return Ok(exit_code);
     }
 
     Ok(0)
@@ -1009,14 +1067,16 @@ fn run_push(args: &[String], verbose: u8, global_args: &[String]) -> Result<i32>
             &compact,
         );
     } else {
+        let exit_code = exit_code_from_output(&output, "git");
         eprintln!("FAILED: git push");
-        if !stderr.trim().is_empty() {
-            eprintln!("{}", stderr);
-        }
         if !stdout.trim().is_empty() {
-            eprintln!("{}", stdout);
+            println!("{}", stdout.trim());
         }
-        return Ok(exit_code_from_output(&output, "git"));
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        emit_tee_hint(&raw, "git_push", exit_code);
+        return Ok(exit_code);
     }
 
     Ok(0)
@@ -1095,14 +1155,16 @@ fn run_pull(args: &[String], verbose: u8, global_args: &[String]) -> Result<i32>
             &compact,
         );
     } else {
+        let exit_code = exit_code_from_output(&output, "git");
         eprintln!("FAILED: git pull");
-        if !stderr.trim().is_empty() {
-            eprintln!("{}", stderr);
-        }
         if !stdout.trim().is_empty() {
-            eprintln!("{}", stdout);
+            println!("{}", stdout.trim());
         }
-        return Ok(exit_code_from_output(&output, "git"));
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        emit_tee_hint(&raw_output, "git_pull", exit_code);
+        return Ok(exit_code);
     }
 
     Ok(0)
@@ -1178,11 +1240,16 @@ fn run_branch(args: &[String], verbose: u8, global_args: &[String]) -> Result<i3
         if output.status.success() {
             println!("{}", trimmed);
         } else {
+            let exit_code = exit_code_from_output(&output, "git");
             eprintln!("FAILED: git branch {}", args.join(" "));
-            if !stderr.trim().is_empty() {
-                eprintln!("{}", stderr);
+            if !stdout.trim().is_empty() {
+                println!("{}", stdout.trim());
             }
-            return Ok(exit_code_from_output(&output, "git"));
+            if !stderr.trim().is_empty() {
+                eprintln!("{}", stderr.trim());
+            }
+            emit_tee_hint(&combined, "git_branch", exit_code);
+            return Ok(exit_code);
         }
         return Ok(0);
     }
@@ -1215,14 +1282,16 @@ fn run_branch(args: &[String], verbose: u8, global_args: &[String]) -> Result<i3
         if output.status.success() {
             println!("ok");
         } else {
+            let exit_code = exit_code_from_output(&output, "git");
             eprintln!("FAILED: git branch {}", args.join(" "));
-            if !stderr.trim().is_empty() {
-                eprintln!("{}", stderr);
-            }
             if !stdout.trim().is_empty() {
-                eprintln!("{}", stdout);
+                println!("{}", stdout.trim());
             }
-            return Ok(exit_code_from_output(&output, "git"));
+            if !stderr.trim().is_empty() {
+                eprintln!("{}", stderr.trim());
+            }
+            emit_tee_hint(&combined, "git_branch", exit_code);
+            return Ok(exit_code);
         }
         return Ok(0);
     }
@@ -1244,16 +1313,22 @@ fn run_branch(args: &[String], verbose: u8, global_args: &[String]) -> Result<i3
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stderr.trim().is_empty() {
-            eprint!("{}", stderr);
+        let exit_code = exit_code_from_output(&output, "git");
+        if !stdout.trim().is_empty() {
+            println!("{}", stdout.trim());
         }
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        let combined = format!("{}\n{}", stdout, stderr);
+        emit_tee_hint(&combined, "git_branch", exit_code);
         timer.track(
             &format!("git branch {}", args.join(" ")),
             &format!("tok git branch {}", args.join(" ")),
             &raw,
             &raw,
         );
-        return Ok(exit_code_from_output(&output, "git"));
+        return Ok(exit_code);
     }
 
     let filtered = filter_branch_output(&stdout);
@@ -1342,11 +1417,16 @@ fn run_fetch(args: &[String], verbose: u8, global_args: &[String]) -> Result<i32
     let raw = format!("{}{}", stdout, stderr);
 
     if !output.status.success() {
+        let exit_code = exit_code_from_output(&output, "git");
         eprintln!("FAILED: git fetch");
-        if !stderr.trim().is_empty() {
-            eprintln!("{}", stderr);
+        if !stdout.trim().is_empty() {
+            println!("{}", stdout.trim());
         }
-        return Ok(exit_code_from_output(&output, "git"));
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        emit_tee_hint(&raw, "git_fetch", exit_code);
+        return Ok(exit_code);
     }
 
     // Count new refs from stderr (git fetch outputs to stderr)
@@ -1439,8 +1519,11 @@ fn run_stash(
                 msg
             } else {
                 eprintln!("FAILED: git stash {}", sub);
+                if !stdout.trim().is_empty() {
+                    println!("{}", stdout.trim());
+                }
                 if !stderr.trim().is_empty() {
-                    eprintln!("{}", stderr);
+                    eprintln!("{}", stderr.trim());
                 }
                 combined.clone()
             };
@@ -1453,7 +1536,9 @@ fn run_stash(
             );
 
             if !output.status.success() {
-                return Ok(exit_code_from_output(&output, "git"));
+                let exit_code = exit_code_from_output(&output, "git");
+                emit_tee_hint(&combined, "git_stash", exit_code);
+                return Ok(exit_code);
             }
         }
         Some(sub) => {
@@ -1474,8 +1559,11 @@ fn run_stash(
                 msg
             } else {
                 eprintln!("FAILED: git stash {}", sub);
+                if !stdout.trim().is_empty() {
+                    println!("{}", stdout.trim());
+                }
                 if !stderr.trim().is_empty() {
-                    eprintln!("{}", stderr);
+                    eprintln!("{}", stderr.trim());
                 }
                 combined.clone()
             };
@@ -1488,7 +1576,9 @@ fn run_stash(
             );
 
             if !output.status.success() {
-                return Ok(exit_code_from_output(&output, "git"));
+                let exit_code = exit_code_from_output(&output, "git");
+                emit_tee_hint(&combined, "git_stash", exit_code);
+                return Ok(exit_code);
             }
         }
         None => {
@@ -1515,8 +1605,11 @@ fn run_stash(
                 }
             } else {
                 eprintln!("FAILED: git stash");
+                if !stdout.trim().is_empty() {
+                    println!("{}", stdout.trim());
+                }
                 if !stderr.trim().is_empty() {
-                    eprintln!("{}", stderr);
+                    eprintln!("{}", stderr.trim());
                 }
                 combined.clone()
             };
@@ -1524,7 +1617,9 @@ fn run_stash(
             timer.track("git stash", "tok git stash", &combined, &msg);
 
             if !output.status.success() {
-                return Ok(exit_code_from_output(&output, "git"));
+                let exit_code = exit_code_from_output(&output, "git");
+                emit_tee_hint(&combined, "git_stash", exit_code);
+                return Ok(exit_code);
             }
         }
     }
@@ -1592,11 +1687,16 @@ fn run_worktree(args: &[String], verbose: u8, global_args: &[String]) -> Result<
         if output.status.success() {
             println!("ok");
         } else {
+            let exit_code = exit_code_from_output(&output, "git");
             eprintln!("FAILED: git worktree {}", args.join(" "));
-            if !stderr.trim().is_empty() {
-                eprintln!("{}", stderr);
+            if !stdout.trim().is_empty() {
+                println!("{}", stdout.trim());
             }
-            return Ok(exit_code_from_output(&output, "git"));
+            if !stderr.trim().is_empty() {
+                eprintln!("{}", stderr.trim());
+            }
+            emit_tee_hint(&combined, "git_worktree", exit_code);
+            return Ok(exit_code);
         }
         return Ok(0);
     }

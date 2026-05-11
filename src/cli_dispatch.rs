@@ -975,6 +975,10 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
 
         Commands::Mem { command } => crate::cmds::mem::dispatch_mem(command)?,
 
+        Commands::Forgemap { command } => {
+            crate::cmds::forgemap::dispatch_forgemap(command, cli.verbose)?
+        }
+
         Commands::SecurityInspect { file, report } => {
             use crate::security;
             let config = crate::core::config::Config::load().unwrap_or_default();
