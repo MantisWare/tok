@@ -737,6 +737,13 @@ pub(crate) enum Commands {
         #[arg(long)]
         slm: bool,
     },
+
+    /// Full command manual — every tok command with descriptions
+    Man {
+        /// Filter manual to a specific section (e.g. "git", "mem", "security")
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        filter: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1493,6 +1500,7 @@ const TOK_META_COMMANDS: &[&str] = &[
     "untrust",
     "session",
     "rewrite",
+    "man",
 ];
 
 fn run_fallback(parse_error: clap::Error) -> Result<i32> {
@@ -1776,28 +1784,31 @@ fn print_welcome_screen() {
     println!();
 
     // ── Quick Start Guide (boxed) ─────────────────────────────────────
+    let guide_width = 80;
+    let guide_border = "─".repeat(guide_width - 2);
+    let guide_inner = guide_width - 2;
+
     let guide_title = " Quick Start Guide ";
-    let guide_border_len = box_width - 2 - guide_title.len();
+    let guide_title_border_len = guide_width - 2 - guide_title.len();
     println!(
         "  {}{}{}{}",
         "┌".bright_blue(),
         guide_title.bright_white().bold(),
-        "─".repeat(guide_border_len).bright_blue(),
+        "─".repeat(guide_title_border_len).bright_blue(),
         "┐".bright_blue()
     );
 
-    let cmd_col = 32;
+    let cmd_col = 36;
 
-    let print_cmd_row = |cmd: &str, desc: &str| {
+    let print_guide_row = |cmd: &str, desc: &str| {
         let cmd_pad = if cmd.len() < cmd_col {
             " ".repeat(cmd_col - cmd.len())
         } else {
             " ".to_string()
         };
-        // visible between │…│: "  " + cmd + cmd_pad + desc + row_pad = inner
         let content_len = 2 + cmd.len() + cmd_pad.len() + desc.len();
-        let row_pad = if content_len < inner {
-            " ".repeat(inner - content_len)
+        let row_pad = if content_len < guide_inner {
+            " ".repeat(guide_inner - content_len)
         } else {
             String::new()
         };
@@ -1812,57 +1823,143 @@ fn print_welcome_screen() {
         );
     };
 
-    let print_header = |text: &str| {
-        let pad = " ".repeat(inner - 2 - text.len());
+    let print_guide_header = |text: &str| {
+        let pad_len = guide_inner.saturating_sub(2 + text.len());
         println!(
             "  {}  {}{}{}",
             "│".bright_blue(),
             text.bright_white().bold(),
-            pad,
+            " ".repeat(pad_len),
             "│".bright_blue()
         );
     };
 
-    let print_spacer = || {
+    let print_guide_spacer = || {
         println!(
             "  {}{}{}",
             "│".bright_blue(),
-            " ".repeat(inner),
+            " ".repeat(guide_inner),
             "│".bright_blue()
         );
     };
 
-    // Setup section
-    print_header("Setup");
-    print_cmd_row("tok init -g", "Install for Claude Code (recommended)");
-    print_cmd_row("tok init -g --agent cursor", "Install for Cursor");
-    print_cmd_row("tok init -g --gemini", "Install for Gemini CLI");
-    print_cmd_row("tok init --codex", "Install for Codex CLI");
-    print_cmd_row("tok init -g --opencode", "Install for OpenCode");
-    print_cmd_row("tok init --copilot", "Install for GitHub Copilot");
-    print_cmd_row("tok init --all", "Install for ALL agents at once");
+    // ── Setup ─────────────────────────────────────────────────────────
+    print_guide_header("Setup");
+    print_guide_row("tok init -g", "Install for Claude Code (recommended)");
+    print_guide_row("tok init -g --agent cursor", "Install for Cursor");
+    print_guide_row("tok init -g --gemini", "Install for Gemini CLI");
+    print_guide_row("tok init --codex", "Install for Codex CLI");
+    print_guide_row("tok init -g --opencode", "Install for OpenCode");
+    print_guide_row("tok init --copilot", "Install for GitHub Copilot");
+    print_guide_row("tok init --all", "Install for ALL agents at once");
 
-    print_spacer();
+    print_guide_spacer();
 
-    // Usage section
-    print_header("Usage");
-    print_cmd_row("tok <command>", "Any command \u{2014} auto-filtered");
-    print_cmd_row("tok git status", "Git without the wall of text");
-    print_cmd_row("tok cargo test", "Test output, failures only");
-    print_cmd_row("tok gain", "Token savings stats");
-    print_cmd_row("tok gain --graph", "ASCII graph of daily savings");
-    print_cmd_row("tok discover", "Find missed TOK opportunities");
-    print_cmd_row("tok proxy <cmd>", "Passthrough (still tracks stats)");
-    print_cmd_row("tok --help", "All commands and flags");
+    // ── Usage — Filters ───────────────────────────────────────────────
+    print_guide_header("Usage \u{2014} Filters");
+    print_guide_row("tok <command>", "Any command \u{2014} auto-filtered");
+    print_guide_row("tok git status", "Git without the wall of text");
+    print_guide_row("tok cargo test", "Rust tests, failures only");
+    print_guide_row("tok npm run <script>", "npm with boilerplate stripped");
+    print_guide_row("tok pnpm install", "pnpm on quiet-room mode");
+    print_guide_row("tok docker ps", "Containers at a glance");
+    print_guide_row("tok kubectl pods", "Pod status, compact");
+    print_guide_row("tok go test ./...", "Go tests, ~90% fewer tokens");
+    print_guide_row("tok pytest", "Red tests first, fluff last");
+    print_guide_row("tok ruff check .", "Python linting, compact");
+    print_guide_row("tok dotnet test", "xUnit without the XML wall");
+    print_guide_row("tok vitest run", "Vitest failures loud, noise quiet");
+    print_guide_row("tok playwright test", "E2E results without the novel");
+    print_guide_row("tok prisma generate", "Prisma, zero ASCII confetti");
+    print_guide_row("tok tsc", "TypeScript errors, grouped");
+    print_guide_row("tok lint", "ESLint violations by rule/file");
+    print_guide_row("tok prettier --check .", "Who needs formatting, fast");
+    print_guide_row("tok rspec", "RSpec failures, not the whole sonnet");
+    print_guide_row("tok mypy .", "Type errors grouped for humans");
 
-    print_spacer();
+    print_guide_spacer();
 
-    // documentation link
+    // ── Usage — Utilities ─────────────────────────────────────────────
+    print_guide_header("Usage \u{2014} Utilities");
+    print_guide_row("tok ls -la", "ls, fewer columns for LLMs");
+    print_guide_row("tok tree", "Tree you can scroll past");
+    print_guide_row("tok find . -name '*.rs'", "Find with compact tree output");
+    print_guide_row("tok grep <pattern>", "Grep, grouped and trimmed");
+    print_guide_row("tok read <file>", "Smart-filtered file content");
+    print_guide_row("tok smart <file>", "Two-line file summary (local)");
+    print_guide_row("tok diff <a> <b>", "Only the lines that moved");
+    print_guide_row("tok log <file>", "Logs deduplicated, story kept");
+    print_guide_row("tok json <file>", "JSON shrunk or --schema shapes");
+    print_guide_row("tok curl <url>", "curl with JSON auto-detected");
+    print_guide_row("tok wget <url>", "wget sans progress bars");
+    print_guide_row("tok wc <file>", "Counts without decorative padding");
+    print_guide_row("tok env", "Env vars filtered, secrets hidden");
+    print_guide_row("tok deps", "Dependencies, not the full novel");
+    print_guide_row("tok err <command>", "Run anything, print errors only");
+    print_guide_row("tok summary <command>", "Heuristic summary of output");
+    print_guide_row("tok proxy <cmd>", "Raw passthrough (still tracks stats)");
+
+    print_guide_spacer();
+
+    // ── Usage — Analytics ─────────────────────────────────────────────
+    print_guide_header("Usage \u{2014} Analytics");
+    print_guide_row("tok gain", "Token savings stats");
+    print_guide_row("tok gain --graph", "ASCII graph of daily savings");
+    print_guide_row("tok gain --history", "Full command history");
+    print_guide_row("tok cc-economics", "Claude spend vs tok savings");
+    print_guide_row("tok discover", "Find missed TOK opportunities");
+    print_guide_row("tok session", "Usage stats across sessions");
+    print_guide_row("tok learn", "Learn CLI fixes from past mistakes");
+
+    print_guide_spacer();
+
+    // ── Usage — Security ──────────────────────────────────────────────
+    print_guide_header("Usage \u{2014} Security");
+    print_guide_row(
+        "tok --security <command>",
+        "Enable sensitive-data obfuscation",
+    );
+    print_guide_row(
+        "tok security-inspect <text>",
+        "Dry-run: inspect text for secrets",
+    );
+    print_guide_row("tok doctor --slm", "Check SLM runtime health");
+
+    print_guide_spacer();
+
+    // ── Usage — Code Intelligence ─────────────────────────────────────
+    print_guide_header("Usage \u{2014} Code Intelligence");
+    print_guide_row("tok mem index <dir>", "Index symbols and structure");
+    print_guide_row("tok mem search <query>", "Full-text search (BM25)");
+    print_guide_row("tok mem find <symbol>", "Find symbol by name");
+    print_guide_row("tok mem context <symbol>", "Callers, callees, type refs");
+    print_guide_row("tok mem impact <symbol>", "Blast radius analysis");
+    print_guide_row("tok mem dead-code", "Find zero-reference symbols");
+    print_guide_row("tok forgemap init", "Inject ForgeMap source headers");
+    print_guide_row("tok forgemap manifest", "Generate .forgemap manifest");
+    print_guide_row("tok forgemap check", "Coverage report for headers");
+    print_guide_row("tok forgemap wiki bootstrap", "Emit Obsidian vault");
+
+    print_guide_spacer();
+
+    // ── Usage — Configuration ─────────────────────────────────────────
+    print_guide_header("Usage \u{2014} Configuration");
+    print_guide_row("tok config", "View or scaffold tok config");
+    print_guide_row("tok trust", "Trust local .tok filter recipes");
+    print_guide_row("tok untrust", "Remove trusted filter recipes");
+    print_guide_row("tok verify", "Sanity-check hooks and filters");
+    print_guide_row("tok man", "Full command manual (every command)");
+    print_guide_row("tok man <topic>", "Filter manual (e.g. tok man git)");
+    print_guide_row("tok --help", "All commands and flags");
+
+    print_guide_spacer();
+
+    // ── Documentation link ────────────────────────────────────────────
     let doc_text = "Documentation: ";
     let doc_url = "https://github.com/MantisWare/tok";
     let doc_visible = 2 + doc_text.len() + doc_url.len();
-    let doc_pad = if doc_visible < inner {
-        " ".repeat(inner - doc_visible)
+    let doc_pad = if doc_visible < guide_inner {
+        " ".repeat(guide_inner - doc_visible)
     } else {
         String::new()
     };
@@ -1878,9 +1975,454 @@ fn print_welcome_screen() {
     println!(
         "  {}{}{}",
         "└".bright_blue(),
-        border.bright_blue(),
+        guide_border.bright_blue(),
         "┘".bright_blue()
     );
+}
+
+// ── tok man ─────────────────────────────────────────────────────────────
+
+struct ManSection {
+    heading: &'static str,
+    entries: &'static [(&'static str, &'static str)],
+}
+
+const MANUAL: &[ManSection] = &[
+    ManSection {
+        heading: "Git & GitHub",
+        entries: &[
+            ("tok git status", "Compact status output"),
+            (
+                "tok git log",
+                "One-line-per-commit log (all git flags work)",
+            ),
+            ("tok git diff", "Compact diff — just the juicy hunks"),
+            ("tok git show", "Summary + stat + diff that fits"),
+            ("tok git add", "Ultra-compact confirmation"),
+            ("tok git commit", "Ultra-compact confirmation + short hash"),
+            ("tok git push", "Ultra-compact confirmation + branch"),
+            ("tok git pull", "Ultra-compact confirmation + tiny stats"),
+            ("tok git branch", "Branch list without the parade"),
+            ("tok git fetch", "Compact fetch + ref count"),
+            ("tok git stash", "List/show/pop without the scroll"),
+            ("tok git worktree", "Extra checkouts, compact roster"),
+            ("tok git <other>", "Any git subcommand — passthrough"),
+            ("tok gh pr view <n>", "Compact PR view"),
+            ("tok gh pr checks", "Compact PR checks"),
+            ("tok gh run list", "Compact workflow runs"),
+            ("tok gh issue list", "Compact issue list"),
+            ("tok gh api", "Compact API responses"),
+        ],
+    },
+    ManSection {
+        heading: "Build & Compile",
+        entries: &[
+            ("tok cargo build", "Skip the Compiling ticker, keep errors"),
+            ("tok cargo check", "Fast typecheck, minus status spam"),
+            ("tok cargo clippy", "Clippy lints grouped by file"),
+            ("tok cargo install", "Less dependency theatre"),
+            ("tok cargo nextest", "Parallel tests, failures in focus"),
+            ("tok tsc", "TypeScript errors grouped by file/code"),
+            ("tok lint", "ESLint/Biome violations grouped by rule/file"),
+            ("tok prettier --check .", "Files needing format only"),
+            ("tok next build", "Next.js build with route metrics"),
+            ("tok dotnet build", "MSBuild murmur, not shout"),
+            ("tok dotnet restore", "NuGet without the scroll"),
+            ("tok dotnet format", "dotnet-format, trimmed transcript"),
+            ("tok go build", "Errors loud, chatter low"),
+            ("tok go vet", "Static checks, compact receipts"),
+        ],
+    },
+    ManSection {
+        heading: "Test",
+        entries: &[
+            ("tok cargo test", "Failures only (~90% savings)"),
+            ("tok vitest run", "Vitest failures only (~99% savings)"),
+            ("tok playwright test", "E2E failures only (~94% savings)"),
+            ("tok pytest", "Red tests first, fluff last"),
+            (
+                "tok go test ./...",
+                "Go test JSON stream, ~90% fewer tokens",
+            ),
+            ("tok rspec", "RSpec failures, not the whole sonnet"),
+            ("tok rake test", "Minitest without the wallpaper"),
+            ("tok dotnet test", "Xunit without the XML wall"),
+            ("tok test <cmd>", "Generic test wrapper — failures only"),
+        ],
+    },
+    ManSection {
+        heading: "JavaScript & TypeScript",
+        entries: &[
+            ("tok pnpm install", "Fewer progress-bar fireworks"),
+            ("tok pnpm list", "Dependency tree, not encyclopedia"),
+            ("tok pnpm outdated", "pkg: old → new, that's it"),
+            ("tok pnpm typecheck", "Hands off to the tsc filter"),
+            ("tok npm run <script>", "Boilerplate stripped, signal kept"),
+            (
+                "tok npx <cmd>",
+                "Smart routing to tsc/eslint/prisma filters",
+            ),
+            ("tok prisma generate", "Client code, zero ASCII confetti"),
+            ("tok prisma migrate dev", "Schema travel log, compact"),
+            ("tok prisma db push", "\"Just make it match\" energy"),
+        ],
+    },
+    ManSection {
+        heading: "Python",
+        entries: &[
+            ("tok ruff check .", "Python linting, compact output"),
+            ("tok mypy .", "Type errors grouped for humans"),
+            ("tok pytest", "Red tests first, fluff last"),
+            ("tok pip install <pkg>", "pip/uv without the spam"),
+            ("tok pip list", "Compact package list"),
+        ],
+    },
+    ManSection {
+        heading: "Ruby",
+        entries: &[
+            ("tok rake test", "Minitest without the wallpaper"),
+            ("tok rubocop", "RuboCop — compact docket"),
+            ("tok rspec", "RSpec — failures, not the whole sonnet"),
+        ],
+    },
+    ManSection {
+        heading: "Go",
+        entries: &[
+            ("tok go test ./...", "JSON stream, ~90% fewer tokens"),
+            ("tok go build", "Errors loud, chatter low"),
+            ("tok go vet", "Static checks, compact receipts"),
+            (
+                "tok golangci-lint run",
+                "Many linters, one tight transcript",
+            ),
+        ],
+    },
+    ManSection {
+        heading: ".NET",
+        entries: &[
+            ("tok dotnet build", "MSBuild murmur, not shout"),
+            ("tok dotnet test", "Xunit without the XML wall"),
+            ("tok dotnet restore", "NuGet without the scroll"),
+            ("tok dotnet format", "dotnet-format, trimmed transcript"),
+        ],
+    },
+    ManSection {
+        heading: "Graphite (Stacked PRs)",
+        entries: &[
+            ("tok gt log", "Stack story, short chapters"),
+            ("tok gt submit", "Ship the stack, skip the soliloquy"),
+            ("tok gt sync", "Trunk + branches, tight summary"),
+            ("tok gt restack", "Replay commits, fewer lines"),
+            ("tok gt create", "New branch/stack slice, compact"),
+            ("tok gt branch", "Info and moves, Graphite-style"),
+        ],
+    },
+    ManSection {
+        heading: "Files, Search & Utilities",
+        entries: &[
+            ("tok ls <path>", "ls in tree format, compact"),
+            ("tok tree", "tree(1) you can actually scroll past"),
+            ("tok read <file>", "Smart-filtered file content"),
+            (
+                "tok smart <file>",
+                "Two-line file summary (local, no cloud)",
+            ),
+            (
+                "tok find . -name '*.rs'",
+                "find with compact tree-ish output",
+            ),
+            ("tok grep <pattern>", "grep/rg grouped by file, trimmed"),
+            ("tok wc <file>", "Counts without decorative padding"),
+            ("tok diff <a> <b>", "Only the lines that actually moved"),
+            ("tok json <file>", "Shrink values or --schema for shapes"),
+            ("tok env", "Env vars filtered, secrets stay shy"),
+            ("tok deps", "Dependencies without the manifest novel"),
+            ("tok log <file>", "Dedupe repeats, keep the story"),
+            (
+                "tok err <cmd>",
+                "Run anything — print errors & warnings only",
+            ),
+            ("tok summary <cmd>", "Heuristic summary of command output"),
+            ("tok format", "Auto-picks prettier / black / ruff format"),
+        ],
+    },
+    ManSection {
+        heading: "Infrastructure",
+        entries: &[
+            ("tok docker ps", "Who's running, briefly"),
+            ("tok docker images", "Layers, not novels"),
+            ("tok docker logs <c>", "Deduplicated tail party"),
+            ("tok docker compose ps", "Compose services at a glance"),
+            ("tok docker compose logs", "Compose logs, same dedupe magic"),
+            ("tok docker compose build", "Summary, not screenplay"),
+            ("tok kubectl pods", "Who's up, who's pending"),
+            ("tok kubectl services", "Names and ports, trimmed"),
+            ("tok kubectl logs", "Pod gossip, condensed"),
+        ],
+    },
+    ManSection {
+        heading: "Cloud & Database",
+        entries: &[
+            ("tok aws <cmd>", "AWS CLI — JSON in, human-sized lines out"),
+            ("tok psql <cmd>", "psql — tidy tables, fewer borders"),
+        ],
+    },
+    ManSection {
+        heading: "Network",
+        entries: &[
+            ("tok curl <url>", "JSON auto-detected; --schema for shapes"),
+            ("tok wget <url>", "Skip the progress-bar light show"),
+        ],
+    },
+    ManSection {
+        heading: "Code Intelligence — tok mem",
+        entries: &[
+            (
+                "tok mem index <dir>",
+                "Index symbols, relationships, and structure",
+            ),
+            (
+                "tok mem search <query>",
+                "Full-text search across symbols (BM25)",
+            ),
+            ("tok mem find <symbol>", "Exact or fuzzy symbol lookup"),
+            ("tok mem context <symbol>", "Callers, callees, type refs"),
+            (
+                "tok mem relations <sym>",
+                "Analyze by type: callers, callees, hierarchy, imports",
+            ),
+            (
+                "tok mem impact <symbol>",
+                "Blast radius — who breaks if this changes?",
+            ),
+            ("tok mem dead-code", "Symbols with zero inbound references"),
+            (
+                "tok mem central",
+                "Most central symbols (highest connectivity)",
+            ),
+            ("tok mem bridges", "Bridge symbols connecting subgraphs"),
+            (
+                "tok mem communities",
+                "Detect symbol communities (connected components)",
+            ),
+            ("tok mem complexity <fn>", "Estimate cyclomatic complexity"),
+            ("tok mem evolution", "What changed in a time window"),
+            ("tok mem timeline <sym>", "Full change history of a symbol"),
+            ("tok mem changes", "What changed since last session"),
+            ("tok mem detect", "Symbols affected by changed files"),
+            ("tok mem repos", "List all indexed repositories"),
+            ("tok mem status", "Index statistics and health"),
+            (
+                "tok mem forget <repo>",
+                "Remove indexed repo from memory DB",
+            ),
+        ],
+    },
+    ManSection {
+        heading: "Code Intelligence — tok forgemap",
+        entries: &[
+            (
+                "tok forgemap init",
+                "First-time annotation — inject headers into source",
+            ),
+            (
+                "tok forgemap update",
+                "Annotate only files missing a header",
+            ),
+            (
+                "tok forgemap check",
+                "Coverage report — exit 1 if unannotated files",
+            ),
+            ("tok forgemap refresh", "Update exports:/used_by: only"),
+            (
+                "tok forgemap manifest",
+                "Generate .forgemap project manifest",
+            ),
+            (
+                "tok forgemap wiki bootstrap",
+                "Emit per-file Obsidian vault",
+            ),
+            (
+                "tok forgemap wiki sync",
+                "Regenerate narrative project wiki",
+            ),
+            (
+                "tok forgemap install",
+                "Install pre-commit hook and tool prompts",
+            ),
+        ],
+    },
+    ManSection {
+        heading: "Security",
+        entries: &[
+            (
+                "tok --security <cmd>",
+                "Enable security layer — obfuscate sensitive data",
+            ),
+            (
+                "tok --no-security",
+                "Disable security layer (overrides config)",
+            ),
+            (
+                "tok --security-mode <m>",
+                "Mode: observe, balanced, strict, developer",
+            ),
+            (
+                "tok --slm",
+                "Enable local SLM for semantic security scanning",
+            ),
+            ("tok --no-slm", "Disable local SLM (overrides config)"),
+            (
+                "tok security-inspect <f>",
+                "Inspect text/file for sensitive data (dry-run)",
+            ),
+            (
+                "tok doctor --slm",
+                "Check SLM runtime health and configuration",
+            ),
+        ],
+    },
+    ManSection {
+        heading: "Analytics & Insights",
+        entries: &[
+            ("tok gain", "Token savings dashboard"),
+            ("tok gain --graph", "ASCII graph of daily savings"),
+            ("tok gain --history", "Per-command savings history"),
+            (
+                "tok cc-economics",
+                "Claude spend vs tok savings — receipts included",
+            ),
+            (
+                "tok discover",
+                "Mine session history for missed TOK opportunities",
+            ),
+            ("tok session", "Usage stats across sessions"),
+            ("tok learn", "Learn CLI fixes from past mistakes"),
+        ],
+    },
+    ManSection {
+        heading: "Configuration & Setup",
+        entries: &[
+            ("tok init -g", "Install hooks for Claude Code (recommended)"),
+            ("tok init -g --agent cursor", "Install hooks for Cursor"),
+            ("tok init -g --gemini", "Install hooks for Gemini CLI"),
+            ("tok init --codex", "Install hooks for Codex CLI"),
+            ("tok init -g --opencode", "Install hooks for OpenCode"),
+            ("tok init --copilot", "Install hooks for GitHub Copilot"),
+            ("tok init --all", "Install hooks for ALL agents at once"),
+            ("tok config", "View or scaffold tok config"),
+            ("tok verify", "Sanity-check hooks + run TOML filter tests"),
+            ("tok trust", "Trust this project's .tok filter recipes"),
+            ("tok untrust", "Remove trusted local TOML filters"),
+            (
+                "tok proxy <cmd>",
+                "Raw passthrough — still counts toward stats",
+            ),
+        ],
+    },
+    ManSection {
+        heading: "Hook Internals (used by agent integrations)",
+        entries: &[
+            (
+                "tok rewrite <cmd>",
+                "Rewrite a raw command to its tok equivalent",
+            ),
+            ("tok hook gemini", "Gemini BeforeTool — JSON stdin handler"),
+            (
+                "tok hook copilot",
+                "Copilot preToolUse — JSON stdin handler",
+            ),
+            (
+                "tok hook-audit",
+                "Hook rewrite audit (set TOK_HOOK_AUDIT=1 first)",
+            ),
+        ],
+    },
+    ManSection {
+        heading: "Global Flags",
+        entries: &[
+            ("-v / -vv / -vvv", "Increase verbosity"),
+            (
+                "-u / --ultra-compact",
+                "Maximum compression (ASCII icons, inline fields)",
+            ),
+            (
+                "--skip-env",
+                "Pass SKIP_ENV_VALIDATION=1 to child processes",
+            ),
+            ("--security", "Enable security/privacy layer"),
+            (
+                "--security-mode <mode>",
+                "Security mode: observe, balanced, strict, developer",
+            ),
+            ("--slm / --no-slm", "Enable/disable local SLM scanning"),
+        ],
+    },
+];
+
+/// Print the full tok manual. Optionally filter to sections matching a query.
+pub(crate) fn print_manual(filter: &[String]) {
+    use colored::Colorize;
+
+    let query = filter.join(" ").to_lowercase();
+
+    let sections: Vec<&ManSection> = if query.is_empty() {
+        MANUAL.iter().collect()
+    } else {
+        MANUAL
+            .iter()
+            .filter(|s| {
+                s.heading.to_lowercase().contains(&query)
+                    || s.entries.iter().any(|(cmd, desc)| {
+                        cmd.to_lowercase().contains(&query) || desc.to_lowercase().contains(&query)
+                    })
+            })
+            .collect()
+    };
+
+    if sections.is_empty() {
+        println!(
+            "No manual sections match {:?}. Run {} to see all.",
+            query,
+            "tok man".bright_yellow()
+        );
+        return;
+    }
+
+    println!();
+    println!(
+        "  {} {} {}",
+        "TOK".bright_cyan().bold(),
+        format!("v{VERSION}").bright_white().bold(),
+        "— Command Manual".bright_black()
+    );
+    if !query.is_empty() {
+        println!("  {} {:?}", "Filtered to:".bright_black(), query);
+    }
+    println!();
+
+    let cmd_col: usize = 32;
+
+    for section in &sections {
+        println!("  {}", section.heading.bright_white().bold().underline());
+        println!();
+        for (cmd, desc) in section.entries {
+            let pad = if cmd.len() < cmd_col {
+                " ".repeat(cmd_col - cmd.len())
+            } else {
+                "  ".to_string()
+            };
+            println!("    {}{}{}", cmd.bright_yellow(), pad, desc.bright_black());
+        }
+        println!();
+    }
+
+    println!(
+        "  {} {}",
+        "Docs:".bright_black(),
+        "https://github.com/MantisWare/tok".bright_cyan()
+    );
+    println!();
 }
 
 fn main() {
@@ -2213,7 +2755,7 @@ mod tests {
         // TOK meta-commands should produce parse errors (not fall through to raw execution).
         // Skip "proxy" because it uses trailing_var_arg (accepts any args by design).
         for cmd in TOK_META_COMMANDS {
-            if matches!(*cmd, "proxy" | "rewrite" | "session") {
+            if matches!(*cmd, "proxy" | "rewrite" | "session" | "man") {
                 continue; // these use trailing_var_arg (accept any args by design)
             }
             let result = Cli::try_parse_from(["tok", cmd, "--nonexistent-flag-xyz"]);
@@ -2237,6 +2779,7 @@ mod tests {
             vec!["tok", "proxy", "echo", "hi"],
             vec!["tok", "hook-audit"],
             vec!["tok", "cc-economics"],
+            vec!["tok", "man"],
         ];
         for args in &meta_cmds_that_parse {
             let result = Cli::try_parse_from(args.iter());

@@ -91,7 +91,7 @@ pub enum PatchResult {
 }
 
 // Legacy full instructions for backward compatibility (--claude-md mode)
-const TOK_INSTRUCTIONS: &str = r##"<!-- tok-instructions v2 -->
+const TOK_INSTRUCTIONS: &str = r##"<!-- tok-instructions v3 -->
 # TOK (Token Optimization Kit) - Token-Optimized Commands
 
 ## Golden Rule
@@ -108,25 +108,6 @@ tok git add . && tok git commit -m "msg" && tok git push
 ```
 
 ## TOK Commands by Workflow
-
-### Build & Compile (80-90% savings)
-```bash
-tok cargo build         # Cargo build output
-tok cargo check         # Cargo check output
-tok cargo clippy        # Clippy warnings grouped by file (80%)
-tok tsc                 # TypeScript errors grouped by file/code (83%)
-tok lint                # ESLint/Biome violations grouped (84%)
-tok prettier --check    # Files needing format only (70%)
-tok next build          # Next.js build with route metrics (87%)
-```
-
-### Test (90-99% savings)
-```bash
-tok cargo test          # Cargo test failures only (90%)
-tok vitest run          # Vitest failures only (99.5%)
-tok playwright test     # Playwright failures only (94%)
-tok test <cmd>          # Generic test wrapper - failures only
-```
 
 ### Git (59-80% savings)
 ```bash
@@ -155,33 +136,102 @@ tok gh issue list       # Compact issue list (80%)
 tok gh api              # Compact API responses (26%)
 ```
 
+### Build & Compile (80-90% savings)
+```bash
+tok cargo build         # Cargo build output
+tok cargo check         # Cargo check output
+tok cargo clippy        # Clippy warnings grouped by file (80%)
+tok tsc                 # TypeScript errors grouped by file/code (83%)
+tok lint                # ESLint/Biome violations grouped (84%)
+tok prettier --check .  # Files needing format only (70%)
+tok next build          # Next.js build with route metrics (87%)
+tok dotnet build        # .NET build compact
+tok dotnet restore      # NuGet without the scroll
+tok go build            # Go build, errors loud, chatter low
+tok go vet              # Go static checks, compact receipts
+```
+
+### Test (90-99% savings)
+```bash
+tok cargo test          # Cargo test failures only (90%)
+tok cargo nextest       # Nextest parallel failures in focus
+tok vitest run          # Vitest failures only (99.5%)
+tok playwright test     # Playwright failures only (94%)
+tok pytest              # Red tests first, fluff last (90%)
+tok go test ./...       # Go test JSON stream, ~90% fewer tokens
+tok rspec               # RSpec failures, not the whole sonnet
+tok rake test           # Minitest without the wallpaper
+tok dotnet test         # Xunit without the XML wall
+tok test <cmd>          # Generic test wrapper — failures only
+```
+
 ### JavaScript/TypeScript Tooling (70-90% savings)
 ```bash
 tok pnpm list           # Compact dependency tree (70%)
 tok pnpm outdated       # Compact outdated packages (80%)
 tok pnpm install        # Compact install output (90%)
 tok npm run <script>    # Compact npm script output
-tok npx <cmd>           # Compact npx command output
-tok prisma              # Prisma without ASCII art (88%)
+tok npx <cmd>           # Smart routing to tsc/eslint/prisma filters
+tok prisma generate     # Client code, zero ASCII confetti (88%)
+tok prisma migrate dev  # Schema travel log, compact
+tok prisma db push      # "Just make it match" energy
+```
+
+### Python Tooling (80-90% savings)
+```bash
+tok ruff check .        # Python linting, compact
+tok mypy .              # Type errors grouped for humans
+tok pytest              # Red tests first, fluff last
+tok pip install <pkg>   # pip/uv without the spam
+tok pip list            # Compact package list
+```
+
+### Ruby Tooling (80-85% savings)
+```bash
+tok rake test           # Minitest without the wallpaper
+tok rubocop             # RuboCop compact docket
+tok rspec               # RSpec failures, not the whole sonnet
+```
+
+### Go Tooling (85-90% savings)
+```bash
+tok go test ./...       # JSON stream, ~90% fewer tokens
+tok go build            # Errors loud, chatter low
+tok go vet              # Static checks, compact receipts
+tok golangci-lint run   # Many linters, one tight transcript
+```
+
+### Graphite / Stacked PRs (70% savings)
+```bash
+tok gt log              # Stack story, short chapters
+tok gt submit           # Ship the stack, skip the soliloquy
+tok gt sync             # Trunk + branches, tight summary
+tok gt restack          # Replay commits, fewer lines
+tok gt create           # New branch/stack slice, compact
+tok gt branch           # Info and moves, Graphite-style
 ```
 
 ### Files & Search (60-75% savings)
 ```bash
 tok ls <path>           # Tree format, compact (65%)
+tok tree                # tree(1) you can scroll past
 tok read <file>         # Code reading with filtering (60%)
+tok smart <file>        # Two-line file summary (local, no cloud)
 tok grep <pattern>      # Search grouped by file (75%)
 tok find <pattern>      # Find grouped by directory (70%)
+tok wc <file>           # Counts without decorative padding
 ```
 
 ### Analysis & Debug (70-90% savings)
 ```bash
 tok err <cmd>           # Filter errors only from any command
 tok log <file>          # Deduplicated logs with counts
-tok json <file>         # JSON structure without values
+tok json <file>         # JSON shrink values or --schema for shapes
 tok deps                # Dependency overview
-tok env                 # Environment variables compact
-tok summary <cmd>       # Smart summary of command output
+tok env                 # Environment variables compact, secrets hidden
+tok summary <cmd>       # Heuristic summary of command output
 tok diff                # Ultra-compact diffs
+tok format              # Auto-picks prettier / black / ruff format
 ```
 
 ### Infrastructure (85% savings)
@@ -189,38 +239,113 @@ tok diff                # Ultra-compact diffs
 tok docker ps           # Compact container list
 tok docker images       # Compact image list
 tok docker logs <c>     # Deduplicated logs
-tok kubectl get         # Compact resource list
-tok kubectl logs        # Deduplicated pod logs
+tok docker compose ps   # Compose services at a glance
+tok docker compose logs # Compose logs, dedupe magic
+tok kubectl pods        # Who's up, who's pending
+tok kubectl services    # Names and ports, trimmed
+tok kubectl logs        # Pod gossip, condensed
+```
+
+### Cloud & Database (70-85% savings)
+```bash
+tok aws <cmd>           # AWS CLI JSON, human-sized lines out
+tok psql <cmd>          # Tidy tables, fewer borders, fewer tokens
 ```
 
 ### Network (65-70% savings)
 ```bash
-tok curl <url>          # Compact HTTP responses (70%)
+tok curl <url>          # JSON auto-detected; --schema for shapes (70%)
 tok wget <url>          # Compact download output (65%)
 ```
 
-### Meta Commands
+### .NET (80-85% savings)
 ```bash
-tok gain                # View token savings statistics
-tok gain --history      # View command history with savings
-tok discover            # Analyze Claude Code sessions for missed TOK usage
-tok proxy <cmd>         # Run command without filtering (for debugging)
-tok init                # Add TOK instructions to CLAUDE.md
-tok init --global       # Add TOK to ~/.claude/CLAUDE.md
+tok dotnet build        # MSBuild murmur, not shout
+tok dotnet test         # Xunit without the XML wall
+tok dotnet restore      # NuGet without the scroll
+tok dotnet format       # dotnet-format, trimmed transcript
 ```
+
+### Code Intelligence (use when needed)
+```bash
+tok mem index <dir>     # Index symbols, relationships, structure
+tok mem search <query>  # Full-text search across indexed symbols (BM25)
+tok mem find <symbol>   # Exact or fuzzy symbol lookup
+tok mem context <symbol>  # Callers, callees, type refs
+tok mem impact <symbol> # Blast radius — who breaks if this changes?
+tok mem dead-code       # Symbols with zero inbound references
+tok mem changes         # What changed since last session
+tok mem detect          # Symbols affected by changed files
+tok mem relations <sym> # Callers, callees, hierarchy, imports
+tok mem evolution       # What changed in a time window
+tok mem timeline <sym>  # Full change history of a symbol
+tok mem central         # Most central symbols (highest connectivity)
+tok mem bridges         # Bridge symbols connecting subgraphs
+tok mem communities     # Connected components in symbol graph
+tok mem complexity <fn> # Cyclomatic complexity estimate
+tok mem repos           # List all indexed repositories
+tok mem status          # Index stats and health
+tok mem forget <repo>   # Remove indexed repo from memory DB
+tok forgemap init       # Inject ForgeMap headers into source files
+tok forgemap update     # Annotate only files missing a header
+tok forgemap check      # Coverage report — exit 1 if unannotated
+tok forgemap refresh    # Update exports:/used_by: only
+tok forgemap manifest   # Generate .forgemap project manifest
+tok forgemap wiki bootstrap  # Emit per-file Obsidian vault
+tok forgemap wiki sync  # Regenerate narrative project wiki
+```
+
+### Security
+```bash
+tok --security <cmd>    # Obfuscate sensitive data in output
+tok security-inspect <text>  # Dry-run: inspect text for secrets
+tok doctor --slm        # Check SLM runtime health and configuration
+```
+
+Global security flags: `--security`, `--no-security`, `--security-mode <mode>` (observe/balanced/strict/developer), `--slm`, `--no-slm`
+
+### Analytics & Insights
+```bash
+tok gain                # Token savings dashboard
+tok gain --graph        # ASCII graph of daily savings
+tok gain --history      # Per-command savings history
+tok cc-economics        # Claude spend vs tok savings — receipts included
+tok discover            # Find missed TOK opportunities in session history
+tok session             # Usage stats across sessions
+tok learn               # Learn CLI fixes from past mistakes
+```
+
+### Configuration & Debugging
+```bash
+tok config              # View or scaffold tok config
+tok verify              # Sanity-check hooks + run inline TOML filter tests
+tok trust               # Trust this project's .tok filter recipes
+tok untrust             # Remove trusted local TOML filters
+tok proxy <cmd>         # Raw command passthrough (still tracks stats)
+tok man                 # Full command manual (every command with descriptions)
+tok man <topic>         # Filter manual to a topic (e.g. tok man security)
+```
+
+### Useful Flags
+- `-u` / `--ultra-compact` — maximum compression (ASCII icons, inline fields)
+- `--security` / `--security-mode <mode>` — privacy/obfuscation layer
+- `-v` / `-vv` / `-vvv` — increase verbosity
 
 ## Token Savings Overview
 
 | Category | Commands | Typical Savings |
 |----------|----------|-----------------|
-| Tests | vitest, playwright, cargo test | 90-99% |
-| Build | next, tsc, lint, prettier | 70-87% |
-| Git | status, log, diff, add, commit | 59-80% |
-| GitHub | gh pr, gh run, gh issue | 26-87% |
-| Package Managers | pnpm, npm, npx | 70-90% |
-| Files | ls, read, grep, find | 60-75% |
+| Tests | vitest, playwright, cargo test, pytest, go test, rspec | 90-99% |
+| Build | next, tsc, lint, prettier, cargo, dotnet, go | 70-90% |
+| Git | status, log, diff, add, commit, push, pull | 59-80% |
+| GitHub | gh pr, gh run, gh issue, gh api | 26-87% |
+| Package Managers | pnpm, npm, npx, pip | 70-90% |
+| Files | ls, tree, read, smart, grep, find, wc | 60-75% |
+| Linting | ruff, mypy, rubocop, golangci-lint, format | 80-90% |
 | Infrastructure | docker, kubectl | 85% |
+| Cloud/DB | aws, psql | 70-85% |
 | Network | curl, wget | 65-70% |
+| Graphite | gt log, submit, sync, restack | 70% |
 
 Overall average: **60-90% token reduction** on common development operations.
 <!-- /tok-instructions -->
@@ -2385,7 +2510,7 @@ const COPILOT_HOOK_JSON: &str = r#"{
 
 const COPILOT_INSTRUCTIONS: &str = r#"# TOK — Token-Optimized CLI
 
-**tok** is a CLI proxy that filters and compresses command outputs, saving 60-90% tokens.
+**tok** is a CLI proxy that filters and compresses command outputs, saving 60-90% tokens. Always prefix shell commands with `tok`. If TOK has a filter, it compresses; if not, it passes through unchanged.
 
 ## Rule
 
@@ -2400,14 +2525,109 @@ docker ps                  tok docker ps
 kubectl get pods           tok kubectl pods
 ```
 
-## Meta commands (use directly)
+Even in chains: `tok git add . && tok git commit -m "msg" && tok git push`
+
+## Filters (60+ tools)
 
 ```bash
-tok gain              # Token savings dashboard
-tok gain --history    # Per-command savings history
-tok discover          # Find missed tok opportunities
-tok proxy <cmd>       # Run raw (no filtering) but track usage
+# Git & GitHub
+tok git status / log / diff / show / add / commit / push / pull / branch / fetch / stash
+tok gh pr view <n> / gh issue list / gh run list
+
+# Build & Compile
+tok cargo build / check / clippy
+tok tsc / lint / prettier --check . / next build
+tok dotnet build / go build / go vet
+
+# Test
+tok cargo test / vitest run / playwright test / pytest
+tok go test ./... / rspec / rake test / dotnet test
+tok test <cmd>
+
+# Package Managers
+tok pnpm install / list / outdated
+tok npm run <script> / npx <cmd> / pip install / deps
+
+# Files & Search
+tok ls / tree / read <file> / smart <file>
+tok find / grep / wc / diff / json / env / log
+tok err <cmd> / summary <cmd>
+
+# Infrastructure & Network
+tok docker ps / images / logs / compose
+tok kubectl pods / services / logs
+tok aws <cmd> / psql <cmd>
+tok curl <url> / wget <url>
+
+# Linting & Formatting
+tok ruff check . / mypy . / rubocop / golangci-lint run / format
+
+# Stacked PRs (Graphite)
+tok gt log / submit / sync / restack / create / branch
 ```
+
+## Code Intelligence
+
+```bash
+tok mem index <dir>        # Index symbols and structure
+tok mem search <query>     # Full-text search (BM25)
+tok mem find <symbol>      # Exact or fuzzy symbol lookup
+tok mem context <symbol>   # Callers, callees, type refs
+tok mem impact <symbol>    # Blast radius analysis
+tok mem dead-code          # Zero-reference symbols
+tok mem changes            # What changed since last session
+tok forgemap init          # Annotate source files with headers
+tok forgemap check         # Coverage report
+tok forgemap manifest      # Generate project manifest
+tok forgemap wiki bootstrap  # Emit Obsidian vault
+```
+
+## Security
+
+```bash
+tok --security <cmd>       # Obfuscate sensitive data in output
+tok security-inspect <text>  # Dry-run: inspect for secrets
+tok doctor --slm           # Check SLM runtime health
+```
+
+## Analytics & Insights
+
+```bash
+tok gain                   # Token savings dashboard
+tok gain --graph           # ASCII graph of daily savings
+tok gain --history         # Per-command savings history
+tok cc-economics           # Claude spend vs tok savings
+tok discover               # Find missed tok opportunities
+tok session                # Usage stats across sessions
+tok learn                  # Learn CLI fixes from past mistakes
+```
+
+## Configuration
+
+```bash
+tok config                 # View or scaffold tok config
+tok verify                 # Sanity-check hooks and filters
+tok trust / untrust        # Manage local .tok filter trust
+tok proxy <cmd>            # Raw passthrough (still tracks stats)
+tok man                    # Full command manual (every command)
+tok man <topic>            # Filter manual (e.g. tok man security)
+```
+
+## Useful Flags
+
+- `-u` / `--ultra-compact` — maximum compression
+- `--security` / `--security-mode <mode>` — privacy layer
+- `-v` / `-vv` / `-vvv` — increase verbosity
+
+## Verification
+
+```bash
+tok --version              # Should show: tok X.Y.Z
+tok gain                   # Should work (not "command not found")
+which tok                  # Verify correct binary
+```
+
+> **Different tool**: If `tok gain` fails, confirm you installed Token Optimization Kit (MantisWare/tok). Rust Type Kit is `reachingforthejack/rtk` (usually the `rtk` command).
 "#;
 
 /// Entry point for `tok init --copilot`
