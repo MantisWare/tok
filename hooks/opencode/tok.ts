@@ -26,7 +26,7 @@ export const TokOpenCodePlugin: Plugin = async ({ $ }) => {
       if (typeof command !== "string" || !command) return
 
       try {
-        const result = await $`tok rewrite ${command}`.quiet().nothrow()
+        const result = await $`TOK_CLIENT=opencode tok rewrite ${command}`.quiet().nothrow()
         const rewritten = String(result.stdout).trim()
         if (rewritten && rewritten !== command) {
           ;(args as Record<string, unknown>).command = rewritten

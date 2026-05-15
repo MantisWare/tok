@@ -15,6 +15,8 @@
 #   2           Deny rule matched → pass through unchanged
 #   3 + stdout  Ask rule matched → rewrite but let the agent prompt the user
 
+export TOK_CLIENT=cursor
+
 if ! command -v jq &>/dev/null; then
   echo "[tok] WARNING: jq is not installed. Hook cannot rewrite commands. Install jq: https://jqlang.github.io/jq/download/" >&2
   exit 0

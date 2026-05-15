@@ -429,6 +429,15 @@ pub(crate) enum Commands {
         /// Clear stored gain / tracking data (`--project` limits to the current directory tree)
         #[arg(long)]
         reset: bool,
+        /// Breakdown by client (cursor, claude, copilot, terminal, …)
+        #[arg(long)]
+        by_client: bool,
+        /// Number of commands in the "By Command" table (default 10, max 100)
+        #[arg(long, default_value_t = 10, value_name = "N")]
+        top: usize,
+        /// Aggregate by base tool (cargo, grep, git, …) instead of full tok_cmd
+        #[arg(long)]
+        rollup: bool,
     },
 
     /// Claude spend vs tok savings — receipts included
@@ -1904,6 +1913,8 @@ fn print_welcome_screen() {
     // ── Usage — Analytics ─────────────────────────────────────────────
     print_guide_header("Usage \u{2014} Analytics");
     print_guide_row("tok gain", "Token savings stats");
+    print_guide_row("tok gain --top 25", "Leaderboard size (default 10, max 100)");
+    print_guide_row("tok gain --rollup", "Aggregate by tool (cargo, grep, …)");
     print_guide_row("tok gain --graph", "ASCII graph of daily savings");
     print_guide_row("tok gain --history", "Full command history");
     print_guide_row("tok cc-economics", "Claude spend vs tok savings");
@@ -2286,6 +2297,8 @@ const MANUAL: &[ManSection] = &[
         heading: "Analytics & Insights",
         entries: &[
             ("tok gain", "Token savings dashboard"),
+            ("tok gain --top 25", "Show more commands in leaderboard"),
+            ("tok gain --rollup", "Aggregate savings by base tool"),
             ("tok gain --graph", "ASCII graph of daily savings"),
             ("tok gain --history", "Per-command savings history"),
             (
@@ -2745,6 +2758,18 @@ mod tests {
         if let Ok(cli) = result {
             match cli.command {
                 Commands::Gain { reset, .. } => assert!(reset),
+                _ => panic!("Expected Gain command"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_gain_by_client_flag_parses() {
+        let result = Cli::try_parse_from(["tok", "gain", "--by-client"]);
+        assert!(result.is_ok());
+        if let Ok(cli) = result {
+            match cli.command {
+                Commands::Gain { by_client, .. } => assert!(by_client),
                 _ => panic!("Expected Gain command"),
             }
         }

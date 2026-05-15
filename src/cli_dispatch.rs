@@ -477,6 +477,9 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
             format,
             failures,
             reset,
+            by_client,
+            top,
+            rollup,
         } => {
             crate::analytics::gain::run(
                 project, // added: pass project flag
@@ -491,6 +494,9 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
                 &format,
                 failures,
                 reset,
+                by_client,
+                top,
+                rollup,
                 cli.verbose,
             )?;
             0

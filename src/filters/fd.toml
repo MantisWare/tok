@@ -1,0 +1,17 @@
+[filters.fd]
+description = "Compact fd/find output — cap lines and trim paths"
+match_command = "^fd\\b"
+strip_ansi = true
+strip_lines_matching = ["^\\s*$"]
+truncate_lines_at = 120
+max_lines = 50
+
+[[tests.fd]]
+name = "preserves matches under line cap"
+input = "./src/main.rs\n./src/lib.rs\n./tests/cli/test.rs"
+expected = "./src/main.rs\n./src/lib.rs\n./tests/cli/test.rs"
+
+[[tests.fd]]
+name = "empty input passes through"
+input = ""
+expected = ""

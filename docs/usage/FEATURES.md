@@ -1072,6 +1072,9 @@ tok gain --monthly              # Ventilation par mois
 tok gain --all                  # Toutes les ventilations
 tok gain --quota -t pro         # Estimation d'economies sur le quota mensuel
 tok gain --failures             # Log des echecs de parsing (commandes en fallback)
+tok gain --top 25               # N commandes dans le tableau (defaut 10, max 100)
+tok gain --rollup --top 25      # Agreger par outil (cargo, grep, git, toml:jq, …)
+tok gain --by-client            # Ventilation par client (cursor, claude, …)
 tok gain --format json          # Export JSON (pour dashboards)
 tok gain --format csv           # Export CSV
 ```
@@ -1091,6 +1094,9 @@ tok gain --format csv           # Export CSV
 | `--all` | `-a` | Toutes les ventilations |
 | `--format` | `-f` | Format de sortie : `text`, `json`, `csv` |
 | `--failures` | `-F` | Affiche les commandes en fallback |
+| `--top` | | Nombre de commandes dans « By Command » (defaut 10, max 100) |
+| `--rollup` | | Agreger par outil au lieu du `tok_cmd` complet |
+| `--by-client` | | Ventilation par client (`TOK_CLIENT`) |
 
 **Exemple de sortie :**
 ```

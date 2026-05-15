@@ -1,0 +1,17 @@
+[filters.journalctl]
+description = "Compact journalctl logs — dedupe blanks, cap lines"
+match_command = "^journalctl\\b"
+strip_ansi = true
+strip_lines_matching = ["^\\s*$"]
+truncate_lines_at = 160
+max_lines = 40
+
+[[tests.journalctl]]
+name = "short log passes through"
+input = "Mar 10 12:00:01 host systemd[1]: Started Application.\nMar 10 12:00:02 host app[42]: ready"
+expected = "Mar 10 12:00:01 host systemd[1]: Started Application.\nMar 10 12:00:02 host app[42]: ready"
+
+[[tests.journalctl]]
+name = "empty input passes through"
+input = ""
+expected = ""

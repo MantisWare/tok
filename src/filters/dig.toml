@@ -1,0 +1,30 @@
+[filters.dig]
+description = "Compact dig DNS output — strip comment noise, cap lines"
+match_command = "^dig\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^; <<>>",
+  "^;; global options:",
+  "^;; Got answer:",
+  "^;; WHEN:",
+  "^;; MSG SIZE",
+]
+truncate_lines_at = 120
+max_lines = 30
+
+[[tests.dig]]
+name = "answer section preserved"
+input = """
+; <<>> DiG 9.18 <<>> example.com
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR
+example.com.		300	IN	A	93.184.216.34
+"""
+expected = "example.com.\t\t300\tIN\tA\t93.184.216.34\n"
+
+[[tests.dig]]
+name = "empty input passes through"
+input = ""
+expected = ""

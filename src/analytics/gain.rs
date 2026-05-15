@@ -1,7 +1,9 @@
 //! Shows users how many tokens TOK has saved them over time.
 
 use crate::core::display_helpers::{format_duration, print_period_table};
-use crate::core::tracking::{DayStats, MonthStats, Tracker, WeekStats};
+use crate::core::tracking::{
+    ClientStats, DayStats, GainByCommandOptions, MonthStats, Tracker, WeekStats,
+};
 use crate::core::utils::{format_tokens, format_usd};
 use crate::hooks::hook_check;
 use anyhow::{Context, Result};
@@ -29,6 +31,9 @@ pub fn run(
     format: &str,
     failures: bool,
     reset: bool,
+    by_client: bool,
+    top: usize,
+    rollup: bool,
     _verbose: u8,
 ) -> Result<()> {
     let tracker = Tracker::new().context("Failed to initialize tracking database")?;
@@ -51,7 +56,9 @@ pub fn run(
                 weekly,
                 monthly,
                 all,
-                project_scope.as_deref(), // added: pass project scope
+                project_scope.as_deref(),
+                top,
+                rollup,
             );
         }
         "csv" => {
@@ -67,13 +74,19 @@ pub fn run(
         _ => {} // Continue with text format
     }
 
+    let by_command_opts = GainByCommandOptions { limit: top, rollup };
     let summary = tracker
-        .get_summary_filtered(project_scope.as_deref()) // changed: use filtered variant
+        .get_summary_filtered_with_options(project_scope.as_deref(), by_command_opts)
         .context("Failed to load token savings summary from database")?;
 
     if summary.total_commands == 0 {
         println!("No tracking data yet.");
         println!("Run some tok commands to start tracking savings.");
+        return Ok(());
+    }
+
+    if by_client && !daily && !weekly && !monthly && !all {
+        print_by_client_table(&summary.by_client, summary.total_saved);
         return Ok(());
     }
 
@@ -152,8 +165,12 @@ pub fn run(
         }
 
         if !summary.by_command.is_empty() {
-            // added: styled section header
-            println!("{}", styled("By Command", true));
+            let section_title = if rollup {
+                format!("By Command (top {top}, rolled up)")
+            } else {
+                format!("By Command (top {top})")
+            };
+            println!("{}", styled(&section_title, true));
 
             // added: dynamic column widths for clean alignment
             let cmd_width = 24usize;
@@ -234,6 +251,10 @@ pub fn run(
             }
             println!("{}", "─".repeat(table_width));
             println!();
+        }
+
+        if !summary.by_client.is_empty() {
+            print_by_client_table(&summary.by_client, summary.total_saved);
         }
 
         if graph && !summary.by_day.is_empty() {
@@ -400,6 +421,78 @@ fn mini_bar(value: usize, max: usize, width: usize) -> String {
     }
 }
 
+/// Print per-client savings table for `tok gain --by-client`.
+fn print_by_client_table(by_client: &[ClientStats], total_saved: usize) {
+    println!("{}", styled("By Client", true));
+
+    let client_width = by_client
+        .iter()
+        .map(|c| c.client.len())
+        .max()
+        .unwrap_or(6)
+        .max(6);
+    let count_width = by_client
+        .iter()
+        .map(|c| c.commands.to_string().len())
+        .max()
+        .unwrap_or(5)
+        .max(5);
+    let saved_width = by_client
+        .iter()
+        .map(|c| format_tokens(c.saved_tokens).len())
+        .max()
+        .unwrap_or(5)
+        .max(5);
+    let share_width = 7usize;
+
+    let table_width =
+        2 + client_width + 2 + count_width + 2 + saved_width + 2 + 6 + 2 + share_width;
+    println!("{}", "─".repeat(table_width));
+    println!(
+        "{:<client_width$}  {:>count_width$}  {:>saved_width$}  {:>6}  {:>share_width$}",
+        "Client",
+        "Cmds",
+        "Saved",
+        "Avg%",
+        "Share",
+        client_width = client_width,
+        count_width = count_width,
+        saved_width = saved_width,
+        share_width = share_width
+    );
+    println!("{}", "─".repeat(table_width));
+
+    for row in by_client {
+        let share_pct = if total_saved > 0 {
+            (row.saved_tokens as f64 / total_saved as f64) * 100.0
+        } else {
+            0.0
+        };
+        let client_cell = style_command_cell(&format!(
+            "{:<client_width$}",
+            row.client,
+            client_width = client_width
+        ));
+        let pct_plain = format!("{:>6}", format!("{:.1}%", row.savings_pct));
+        println!(
+            "{}  {:>count_width$}  {:>saved_width$}  {}  {:>share_width$.1}%",
+            client_cell,
+            row.commands,
+            format_tokens(row.saved_tokens),
+            colorize_pct_cell(row.savings_pct, &pct_plain),
+            share_pct,
+            count_width = count_width,
+            saved_width = saved_width,
+            share_width = share_width
+        );
+    }
+    println!("{}", "─".repeat(table_width));
+    println!(
+        "Note: client from TOK_CLIENT (hooks prefix rewritten commands). Legacy rows: unknown."
+    );
+    println!();
+}
+
 /// Print an efficiency meter with colored progress bar (TTY-aware). // added
 fn print_efficiency_meter(pct: f64) {
     let width = 24usize;
@@ -555,12 +648,22 @@ fn print_monthly(tracker: &Tracker, project_scope: Option<&str>) -> Result<()> {
 #[derive(Serialize)]
 struct ExportData {
     summary: ExportSummary,
+    by_client: Vec<ClientStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     daily: Option<Vec<DayStats>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     weekly: Option<Vec<WeekStats>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     monthly: Option<Vec<MonthStats>>,
+}
+
+#[derive(Serialize)]
+struct ExportCommandRow {
+    command: String,
+    count: usize,
+    saved_tokens: usize,
+    savings_pct: f64,
+    avg_time_ms: u64,
 }
 
 #[derive(Serialize)]
@@ -574,19 +677,38 @@ struct ExportSummary {
     cost_per_million_tokens: f64,
     total_time_ms: u64,
     avg_time_ms: u64,
+    top: usize,
+    rollup: bool,
+    by_command: Vec<ExportCommandRow>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_json(
     tracker: &Tracker,
     daily: bool,
     weekly: bool,
     monthly: bool,
     all: bool,
-    project_scope: Option<&str>, // added: project scope
+    project_scope: Option<&str>,
+    top: usize,
+    rollup: bool,
 ) -> Result<()> {
+    let by_command_opts = GainByCommandOptions { limit: top, rollup };
     let summary = tracker
-        .get_summary_filtered(project_scope) // changed: use filtered variant
+        .get_summary_filtered_with_options(project_scope, by_command_opts)
         .context("Failed to load token savings summary from database")?;
+
+    let by_command: Vec<ExportCommandRow> = summary
+        .by_command
+        .iter()
+        .map(|(cmd, count, saved, pct, avg_time)| ExportCommandRow {
+            command: cmd.clone(),
+            count: *count,
+            saved_tokens: *saved,
+            savings_pct: *pct,
+            avg_time_ms: *avg_time,
+        })
+        .collect();
 
     let export = ExportData {
         summary: ExportSummary {
@@ -599,7 +721,11 @@ fn export_json(
             cost_per_million_tokens: COST_PER_MILLION_TOKENS,
             total_time_ms: summary.total_time_ms,
             avg_time_ms: summary.avg_time_ms,
+            top,
+            rollup,
+            by_command,
         },
+        by_client: summary.by_client,
         daily: if all || daily {
             Some(tracker.get_all_days_filtered(project_scope)?) // changed: use filtered
         } else {

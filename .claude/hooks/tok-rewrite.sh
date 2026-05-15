@@ -12,6 +12,8 @@
 #   2           Deny rule matched → pass through (Claude Code native deny handles it)
 #   3 + stdout  Ask rule matched → rewrite but let Claude Code prompt the user
 
+export TOK_CLIENT=claude
+
 # --- Audit logging (opt-in via TOK_HOOK_AUDIT=1) ---
 _tok_audit_log() {
   if [ "${TOK_HOOK_AUDIT:-0}" != "1" ]; then return; fi

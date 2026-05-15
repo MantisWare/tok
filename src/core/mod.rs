@@ -1,5 +1,6 @@
 //! Building blocks shared across all TOK modules.
 
+pub mod client;
 pub mod config;
 pub mod constants;
 pub mod display_helpers;

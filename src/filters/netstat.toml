@@ -1,0 +1,17 @@
+[filters.netstat]
+description = "Compact netstat output — cap rows"
+match_command = "^netstat\\b"
+strip_ansi = true
+strip_lines_matching = ["^\\s*$"]
+truncate_lines_at = 120
+max_lines = 35
+
+[[tests.netstat]]
+name = "short listing passes through"
+input = "Active Internet connections\nProto Recv-Q Send-Q Local Address           Foreign Address"
+expected = "Active Internet connections\nProto Recv-Q Send-Q Local Address           Foreign Address"
+
+[[tests.netstat]]
+name = "empty input passes through"
+input = ""
+expected = ""

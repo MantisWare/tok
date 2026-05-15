@@ -8,7 +8,7 @@
 
 ---
 
-**tok** sits between your shell and your model: it filters, groups, and squashes command output so the assistant sees signal, not noise. One Rust binary, 100+ commands, under ~10ms of overhead — basically a bouncer for your terminal.
+**tok** sits between your shell and your model: it filters, groups, and squashes command output so the assistant sees signal, not noise. One Rust binary, **100+ filtered commands**, under ~10ms of overhead — basically a bouncer for your terminal who also keeps receipts (`tok gain`), remembers your codebase (`tok mem`), and can redact secrets on the way out (`--security`).
 
 ## Token Savings (30-min Claude Code Session)
 
@@ -52,8 +52,9 @@ For more options, see **[INSTALL.md](INSTALL.md)**.
 ### Verify Installation
 
 ```bash
-tok --version   # Should show "tok 0.1.0"
+tok --version   # Should show "tok 0.1.18" (or newer)
 tok gain        # Should show token savings stats
+tok man         # Full command manual (filter: tok man git)
 ```
 
 > **Name collision warning**: Another project named "tok" (Rust Type Kit) exists on crates.io. If `tok gain` fails, you have the wrong package. Use `cargo install --git` above instead.
@@ -77,6 +78,21 @@ The hook quietly rewrites Bash commands (e.g. `git status` → `tok git status`)
 
 **Heads-up:** the hook only touches **Bash** tool calls. Claude Code’s built-in `Read`, `Grep`, and `Glob` skip that path, so no auto-rewrite there. Want compact output anyway? Use shell (`cat`/`head`/`tail`, `rg`/`grep`, `find`) or call `tok read`, `tok grep`, or `tok find` yourself.
 
+## What’s in the Box
+
+TOK isn’t just “prettier `git status`.” Six layers, same binary:
+
+| Layer | What it does | Jump in with |
+|-------|----------------|----------------|
+| **Proxy filters** | Run real CLI tools, return compressed output | `tok git status`, `tok cargo test` |
+| **Auto-rewrite hooks** | Transparent `git` → `tok git` in your agent | `tok init -g` |
+| **Analytics** | SQLite history, savings dashboards, missed-opportunity mining | `tok gain`, `tok discover` |
+| **Security (optional)** | Obfuscate PII/secrets before context; restore on the way back | `tok --security proxy …` |
+| **Code memory (`tok mem`)** | Index symbols, search, impact, dead-code — structural, not grep | `tok mem index .` |
+| **ForgeMap** | Machine-readable headers + manifests for agent orientation | `tok forgemap init src/` |
+
+Don’t know where to start? `tok man` prints the whole menu; `tok man mem` or `tok man security` narrows it down.
+
 ## How It Works
 
 ```
@@ -95,146 +111,223 @@ Under the hood we mix four moves (pick what fits each command):
 3. **Truncation** — keep context, ditch repeats
 4. **Deduplication** — “same line ×47” becomes one line + a count
 
+Unknown subcommand? **Passthrough** — run the real binary, log metrics, move on. Filters that choke fall back the same way (see `src/cmds/README.md`).
+
 ## Commands
 
-### Files
+> **Passthrough promise:** if TOK doesn’t recognize a subcommand, it runs the real tool unchanged and still logs the run. You can prefix everything with `tok` and never get stuck.
+
+Run `tok man` for the full catalog, or `tok man <topic>` (e.g. `git`, `mem`, `security`). Deep dive: **[docs/usage/FEATURES.md](docs/usage/FEATURES.md)**.
+
+### Files & search
+
 ```bash
-tok ls .                        # Token-optimized directory tree
-tok read file.rs                # Smart file reading
-tok read file.rs -l aggressive  # Signatures only (strips bodies)
-tok smart file.rs               # 2-line heuristic code summary
-tok find "*.rs" .               # Compact find results
-tok grep "pattern" .            # Grouped search results
-tok diff file1 file2            # Condensed diff
+tok ls .                        # Tree-style listing (native ls flags work)
+tok tree src/                   # tree(1), filtered
+tok read file.rs                # Smart read (replaces cat/head/tail)
+tok read file.rs -l aggressive  # Signatures only — bodies vanish (~74% smaller)
+tok read file.rs -m 200 -n      # Cap lines + line numbers
+tok smart file.rs               # Two-line “what is this file?” (heuristic, offline)
+tok find "*.rs" .               # Compact find output
+tok fd -e rs                    # fd — same TOML path as other shell tools
+tok grep "pattern" .            # Grouped ripgrep ( -m 50, -l 80 by default)
+tok diff a.rs b.rs              # Condensed file diff
+tok wc -l src/**/*.rs           # wc without the padding parade
+tok jq . package.json           # Truncate huge JSON blobs
+tok stat file.rs                # Drop inode/device noise
+tok du -sh . / tok df -h        # Disk usage, line-capped
+tok ps aux / tok lsof -i        # Process / open-file listings, capped
+tok tar -tf archive.tar         # Archive listings without walls of paths
+tok journalctl -u myapp -n 50   # Logs — blank lines stripped, line cap
+tok dig example.com / tok host example.com
+tok ss -tlnp / tok netstat -an  # Socket tables, capped
 ```
 
-### Git
+Hooks also rewrite bare `fd`, `jq`, `stat`, `tar`, `journalctl`, `lsof`, `dig`, `host`, `ss`, and `bat` → `tok read` when installed.
+
+### Git & GitHub
+
 ```bash
-tok git status                  # Compact status
-tok git log -n 10               # One-line commits
-tok git diff                    # Condensed diff
-tok git add                     # -> "ok"
-tok git commit -m "msg"         # -> "ok abc1234"
-tok git push                    # -> "ok main"
-tok git pull                    # -> "ok 3 files +10 -2"
+tok git status                  # Branch + counts + changed paths (~80%)
+tok git log -n 10               # One line per commit
+tok git diff / show             # Stat-first diffs
+tok git add                     # -> ok
+tok git commit -m "msg"         # -> ok abc1234
+tok git push                    # -> ok main
+tok git pull                    # -> ok 3 files +10 -2
+tok git branch / fetch / stash / worktree   # Same vibe — short answers
+tok git blame / rev-parse / ls-files / describe / tag / remote / config  # Hook rewrites these too
+# Other subcommands: passthrough via `tok git <cmd>` (merge, rebase, …)
+
+tok gh pr list                  # PRs without the novella
+tok gh pr view 42               # PR + checks, compressed
+tok gh issue list               # Issues, compact
+tok gh run list                 # Workflow runs
+tok gt log                      # Graphite stack log (stacked PR workflows)
+tok gt submit / sync / restack  # Other gt subcommands — same compression idea
 ```
 
-### GitHub CLI
+### Tests & errors
+
 ```bash
-tok gh pr list                  # Compact PR listing
-tok gh pr view 42               # PR details + checks
-tok gh issue list               # Compact issue listing
-tok gh run list                 # Workflow run status
+tok test cargo test             # Generic wrapper — failures only
+tok err npm run build           # Any command — errors & warnings only
+tok cargo test                  # Rust tests (~90%)
+tok cargo nextest run           # nextest, failures only
+tok vitest run                  # Vitest (~99% on noisy runs)
+tok playwright test             # E2E — failures rise to the top
+tok pytest                      # Python (~90%)
+tok go test ./...               # Go NDJSON stream (~90%)
+tok rake test / tok rspec       # Ruby stacks
+tok dotnet test                 # .NET TRX — compact failures
 ```
 
-### Test Runners
+### Build, lint & format
+
 ```bash
-tok test cargo test             # Show failures only (-90%)
-tok err npm run build           # Errors/warnings only
-tok vitest run                  # Vitest compact (failures only)
-tok playwright test             # E2E results (failures only)
-tok pytest                      # Python tests (-90%)
-tok go test                     # Go tests (NDJSON, -90%)
-tok cargo test                  # Cargo tests (-90%)
-tok rake test                   # Ruby minitest (-90%)
-tok rspec                       # RSpec tests (JSON, -60%+)
+tok cargo build / check / clippy / install   # Skip “Compiling…” ticker
+tok lint                        # ESLint — grouped by rule + file
+tok lint biome                  # Biome too
+tok tsc                         # TS errors grouped by file + code
+tok mypy .                      # Python types, grouped
+tok next build                  # Next.js route metrics, less noise
+tok prettier --check .          # Only files that need love
+tok format .                    # Auto-detect formatter (prettier/black/ruff/rustfmt)
+tok ruff check / ruff format    # Python (~80%)
+tok golangci-lint run           # Go (~85%)
+tok rubocop                     # Ruby (~60%+)
+tok dotnet build                # MSBuild murmur, not shout
 ```
 
-### Build & Lint
+### Package managers
+
 ```bash
-tok lint                        # ESLint grouped by rule/file
-tok lint biome                  # Supports other linters
-tok tsc                         # TypeScript errors grouped by file
-tok next build                  # Next.js build compact
-tok prettier --check .          # Files needing formatting
-tok cargo build                 # Cargo build (-80%)
-tok cargo clippy                # Cargo clippy (-80%)
-tok ruff check                  # Python linting (JSON, -80%)
-tok golangci-lint run           # Go linting (JSON, -85%)
-tok rubocop                     # Ruby linting (JSON, -60%+)
+tok pnpm list / outdated / install
+tok npm run build               # Strips npm progress-bar theater
+tok npx tsc                     # Smart routing: npx → specialized tok filters
+tok pip list / outdated         # Auto-prefers uv when installed
+tok bundle install              # Gems without “Using …” spam
+tok prisma generate             # No ASCII art, just facts
+tok prisma migrate dev          # Migrations, compact
+tok deps                        # One-screen dep summary (Cargo/npm/py/go/Gemfile…)
 ```
 
-### Package Managers
-```bash
-tok pnpm list                   # Compact dependency tree
-tok pip list                    # Python packages (auto-detect uv)
-tok pip outdated                # Outdated packages
-tok bundle install              # Ruby gems (strip Using lines)
-tok prisma generate             # Schema generation (no ASCII art)
-```
+### Cloud, data & network
 
-### AWS
 ```bash
-tok aws sts get-caller-identity # One-line identity
-tok aws ec2 describe-instances  # Compact instance list
-tok aws lambda list-functions   # Name/runtime/memory (strips secrets)
-tok aws logs get-log-events     # Timestamped messages only
-tok aws cloudformation describe-stack-events  # Failures first
-tok aws dynamodb scan           # Unwraps type annotations
-tok aws iam list-roles          # Strips policy documents
-tok aws s3 ls                   # Truncated with tee recovery
+tok aws sts get-caller-identity # JSON in → human lines out (all AWS services)
+tok aws ec2 describe-instances
+tok psql -c 'SELECT 1'          # Tables without border wallpaper
+tok json config.json            # Shape only (add --schema to strip values)
+tok json package.json --depth 3
+tok env -f AWS                  # Filtered env (secrets masked by default)
+tok env --show-all              # YOLO mode — show everything
+tok log app.log                 # Deduplicated logs ([ERROR] … x42)
+tok curl https://api…           # JSON → schema when detected
+tok wget <url>                  # No progress-bar light show
+tok summary <long cmd…>         # Heuristic one-liner when no dedicated filter exists
+tok proxy <command>             # Raw output, still tracked (0% “savings”, 100% honesty)
 ```
 
 ### Containers
+
 ```bash
-tok docker ps                   # Compact container list
-tok docker images               # Compact image list
-tok docker logs <container>     # Deduplicated logs
-tok docker compose ps           # Compose services
-tok kubectl pods                # Compact pod list
-tok kubectl logs <pod>          # Deduplicated logs
-tok kubectl services            # Compact service list
+tok docker ps / images / logs <c>
+tok docker compose ps / logs / build
+tok kubectl pods / services / logs <pod> [-n ns]
+# Unlisted subcommands pass through to docker/kubectl
 ```
 
-### Data & Analytics
-```bash
-tok json config.json            # Structure without values
-tok deps                        # Dependencies summary
-tok env -f AWS                  # Filtered env vars
-tok log app.log                 # Deduplicated logs
-tok curl <url>                  # Auto-detect JSON + schema
-tok wget <url>                  # Download, strip progress bars
-tok summary <long command>      # Heuristic summary
-tok proxy <command>             # Raw passthrough + tracking
-```
+### Security & privacy
 
-### Security & Privacy
 ```bash
-tok security-inspect file.txt            # Scan file for sensitive data (dry-run)
-tok security-inspect file.txt --report   # Detailed report with entity types
-echo "text" | tok security-inspect -     # Scan from stdin
-tok doctor --slm                         # Check SLM runtime health
+tok security-inspect file.txt            # Dry-run scan
+tok security-inspect file.txt --report   # Entity types + confidence
+echo "text" | tok security-inspect -
+tok doctor                      # General health
+tok doctor --slm                # Local SLM binary + model check
 
-# Global flags (work with any command)
-tok --security proxy git status          # Obfuscate sensitive data in output
+# Global flags (any subcommand)
+tok --security proxy git status
 tok --security --security-mode strict proxy cargo test
-tok --no-security proxy echo "raw"       # Force disable security
-tok --slm --security proxy git log       # Use local SLM for semantic detection
+tok --no-security proxy echo "raw"
+tok --slm --security proxy git log
 ```
 
-### Token Savings Analytics
+See [Optional Security Mode](#optional-security-mode) below for modes, config, and restoration flow.
+
+### Token savings & insights
+
+Every filtered command writes to a local SQLite DB (`~/.local/share/tok/history.db` on Linux, `~/Library/Application Support/tok/` on macOS). **90-day retention**, no command args or file paths in telemetry.
+
 ```bash
-tok gain                        # Summary stats + estimated cost saved
-tok gain --graph                # ASCII graph (last 30 days)
-tok gain --history              # Recent command history
-tok gain --daily                # Day-by-day breakdown
-tok gain --all --format json    # JSON export for dashboards
+tok gain                        # Dashboard: totals, top 10 commands, $ estimate
+tok gain --top 25               # Show more commands in the leaderboard (max 100)
+tok gain --rollup --top 25      # Aggregate by tool (cargo, grep, git, …)
+tok gain --failures             # Commands that fell back to raw passthrough (0% savings)
+tok gain --by-client            # Breakdown by cursor / claude / terminal / …
+tok gain --graph                # ASCII chart — last 30 days
+tok gain --history              # Per-command log
+tok gain --daily / --weekly / --monthly / --all
+tok gain -p                     # This project only
+tok gain --quota -t pro         # “What if” against Claude quota tiers
+tok gain --format json / csv    # Export includes by_command with top/rollup settings
 
-tok discover                    # Find missed savings opportunities
-tok discover --all --since 7    # All projects, last 7 days
+tok discover                    # Mine agent history for commands that should’ve been tok
+tok discover --all --since 7
 
-tok session                     # Show TOK adoption across recent sessions
+tok session                     # TOK adoption across recent agent sessions
+
+tok learn                       # Recurring CLI mistakes → suggested fixes
+tok learn --write-rules         # Emit .claude/rules/cli-corrections.md
+
+tok cc-economics                # Claude spend (ccusage) vs tok savings — receipts
+tok cc-economics --daily --format json
 ```
+
+Details: **[docs/usage/AUDIT_GUIDE.md](docs/usage/AUDIT_GUIDE.md)** · **[docs/usage/TRACKING.md](docs/usage/TRACKING.md)** · **[docs/usage/FEATURES.md](docs/usage/FEATURES.md)** (`tok gain` flags)
+
+### Agent token playbook
+
+Habits that multiply TOK beyond “install the hook”:
+
+| Instead of | Prefer | Why |
+|------------|--------|-----|
+| Repeated `grep` for a symbol | `tok mem find` / `tok mem search` | Structural hits, not thousands of text lines |
+| `cat` on large files | `tok read -l minimal` or `-m N` | Strips noise; caps lines |
+| Orienting in a new repo | `tok mem index . --incremental`, `tok forgemap check` | Fewer full-file reads in chat context |
+| Guessing missed savings | `tok discover --since 7` weekly | Shows proven commands still running unfiltered |
+| Silent 0% savings | `tok gain --failures`, `tok verify` | Stale hooks or parse fallbacks |
+
+Use **`-u` / `--ultra-compact`** on heavy git/cargo output when context is tight. Avoid `TOK_DISABLED=1` except when debugging — `tok gain` warns when bypass rate is high.
+
+### Setup, config & trust
+
+```bash
+tok init -g                     # Hooks + TOK.md (see [Auto-Rewrite Hook](#auto-rewrite-hook))
+tok init --all                  # Every supported agent at once (`-g` for global dirs)
+tok init --show                 # “Did it actually install?”
+tok config                      # Show or scaffold ~/.config/tok/config.toml
+tok verify                      # Hook integrity (SHA-256) + filter smoke tests
+tok trust                       # Trust this repo’s .tok TOML filter recipes
+tok trust --list / tok untrust  # Manage trusted projects
+tok rewrite "git status"        # What the hook runs — prints tok git status
+tok hook gemini / tok hook copilot   # JSON stdin handlers for those agents
+tok hook-audit                  # Rewrite stats (needs TOK_HOOK_AUDIT=1)
+```
+
+Project-local **`.tok/*.toml`** filters: trusted via `tok trust`, verified via `tok verify`. Custom recipes for commands we don’t ship yet.
 
 ## Global Flags
 
 ```bash
--u, --ultra-compact    # ASCII icons, inline format (extra token savings)
--v, --verbose          # Increase verbosity (-v, -vv, -vvv)
+-u, --ultra-compact    # ASCII icons, inline fields — max squeeze
+-v, --verbose          # -v / -vv / -vvv — filtering details on stderr
+--skip-env             # SKIP_ENV_VALIDATION=1 for Next/tsc/lint/Prisma children
 --security             # Enable security/privacy layer
 --no-security          # Disable security (overrides config)
 --security-mode <m>    # observe | balanced | strict | developer
---slm                  # Enable local SLM semantic scanning
+--slm                  # Local SLM semantic scanning (with --security)
 --no-slm               # Disable SLM (overrides config)
 ```
 
@@ -448,13 +541,27 @@ The most effective way to use tok. The hook transparently intercepts Bash comman
 
 ```bash
 tok init -g                 # Install hook + TOK.md (recommended)
+tok init --all              # Claude + Cursor + Gemini + Copilot + … in one go
+tok init -g --all           # Same, global install dirs
 tok init -g --opencode      # OpenCode plugin (instead of Claude Code)
 tok init -g --auto-patch    # Non-interactive (CI/CD)
 tok init -g --hook-only     # Hook only, no TOK.md
 tok init --show             # Verify installation
+tok verify                  # SHA-256 hook integrity + filter tests
 ```
 
-After install, **restart Claude Code**.
+After install, **restart your agent** (Claude Code, Cursor, etc.).
+
+### Under the hood
+
+The bash hook is ~50 lines — it delegates to **`tok rewrite`**, which looks up the command in Rust (`src/discover/registry.rs`). No rewrite? Exit 1, original command runs. Already `tok …`? Left alone. Heredocs (`<<`)? Sacred.
+
+```bash
+tok rewrite "git status"      # → tok git status
+tok rewrite "terraform plan"  # → (no match, exit 1)
+```
+
+Set `TOK_HOOK_AUDIT=1` and run `tok hook-audit` to see what’s getting rewritten vs slipping through.
 
 ## Supported AI Tools
 
@@ -586,12 +693,22 @@ Blocked on upstream BeforeToolCallback support ([mistral-vibe#531](https://githu
 | `kubectl get/logs` | `tok kubectl ...` |
 | `curl` | `tok curl` |
 | `pnpm list/outdated` | `tok pnpm ...` |
+| `npm run …` | `tok npm …` |
+| `npx tsc/eslint/…` | `tok npx …` (routes to specialized filters) |
+| `mypy` | `tok mypy …` |
+| `dotnet build/test` | `tok dotnet …` |
+| `gt log/submit/…` | `tok gt …` |
+| `psql` | `tok psql …` |
 
 Commands already using `tok`, heredocs (`<<`), and unrecognized commands pass through unchanged.
 
 ## Configuration
 
-### Config File
+```bash
+tok config                  # Print or create starter config.toml
+```
+
+### Config file
 
 `~/.config/tok/config.toml` (macOS: `~/Library/Application Support/tok/config.toml`):
 
@@ -606,7 +723,22 @@ exclude_commands = ["curl", "playwright"]  # skip rewrite for these
 enabled = true          # save raw output on failure (default: true)
 mode = "failures"       # "failures", "always", or "never"
 max_files = 20          # rotation limit
+
+[telemetry]
+enabled = false         # opt out of daily anonymous metrics (on by default)
 ```
+
+### Trusted local filters
+
+Add **`.tok/my-command.toml`** in a repo, then:
+
+```bash
+tok trust                   # Allow this project’s TOML recipes
+tok verify --filter my-command   # Run tests for one filter
+tok untrust                 # Revoke
+```
+
+Useful when you want team-specific compression without upstreaming a filter yet.
 
 ### Tee: Full Output Recovery
 
@@ -624,11 +756,51 @@ tok init -g --uninstall     # Remove hook, TOK.md, settings.json entry
 cargo uninstall tok          # Remove binary
 ```
 
+## tok mem — Structural Code Memory
+
+Grep finds *text*. **`tok mem`** finds *symbols* — who calls whom, what breaks if you rename a function, what’s been dead since the refactor. Local SQLite index, no cloud, no “send us your repo.”
+
+**Workflow:** index once (or incrementally), then query instead of re-reading half the tree every session.
+
+```bash
+# Index & maintain
+tok mem index .                 # Full index (symbols + relationships)
+tok mem index . --incremental   # Only changed files
+tok mem index . --clear         # Wipe repo data, re-index from scratch
+tok mem repos                   # What’s indexed
+tok mem status                  # Health + counts
+tok mem forget my-repo          # Drop a repo from the DB
+
+# Find & understand
+tok mem search "token tracking" # BM25 full-text over symbols
+tok mem find run_cli            # Exact or --fuzzy name match
+tok mem context run_cli         # Callers, callees, type refs in one shot
+tok mem relations run_cli --query-type find_callers --depth 3
+
+# Change & risk
+tok mem impact dispatch         # Blast radius — who breaks if this changes?
+tok mem detect src/foo.rs       # Symbols touched by changed files
+tok mem changes                 # Since last session (episode / timestamp)
+tok mem evolution --from … --to …   # Hot symbols in a time window
+tok mem timeline dispatch       # History of one symbol
+
+# Architecture hygiene
+tok mem central                 # Highest connectivity (hub symbols)
+tok mem bridges                 # Symbols linking subgraphs
+tok mem communities             # Connected components
+tok mem dead-code               # Zero inbound refs ( --include-tests optional)
+tok mem complexity              # Cyclomatic complexity ranking
+```
+
+Optional **`mem-ast`** feature flag in Cargo for richer parsing on supported languages. Index lives next to tracking data under the tok data directory.
+
+`tok man mem` · implementation notes in **[docs/contributing/ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)**
+
 ## ForgeMap — Code Indexing and Annotation
 
-ForgeMap is a built-in code-indexing and annotation engine that injects machine-readable comment headers into source files, builds reverse dependency graphs, and generates project manifests. It implements the [CodeDNA](https://github.com/Larens94/codedna) protocol for inter-agent communication.
+ForgeMap is TOK’s other brain for *orientation*: machine-readable comment headers in source files, reverse dependency graphs, and project manifests. It implements the [CodeDNA](https://github.com/Larens94/codedna) protocol — breadcrumbs for agents, not wallpaper for humans.
 
-**Why?** AI agents reading your codebase burn tokens re-discovering file relationships on every session. ForgeMap headers give agents instant context: exports, callers, rules, and provenance — without scanning the entire repo.
+**Why bother?** Your agent re-reads `src/` every Monday like it’s never met you. Headers spell out exports, callers, rules, and provenance so the first `tok read` actually means something.
 
 ### Quick Start
 
@@ -670,17 +842,39 @@ Rust, TypeScript, JavaScript, Python, Go, Ruby, C#, Java — with language-aware
 
 For the full protocol specification, see **[docs/FORGEMAP.md](docs/FORGEMAP.md)**.
 
+## How to Use TOK (cheat sheet)
+
+| You want… | Do this |
+|-----------|---------|
+| Automatic savings in Claude/Cursor/Gemini | `tok init -g` (+ agent flag), restart agent |
+| One-off compact output | `tok <same command you'd run anyway>` |
+| Full output but still logged | `tok proxy <cmd>` |
+| See if hooks are lying | `tok init --show` · `tok verify` |
+| Dashboard / ROI | `tok gain` · `tok cc-economics` |
+| Find commands you forgot to tok | `tok discover` |
+| Map the codebase structurally | `tok mem index .` then `tok mem search …` |
+| Agent-readable file headers | `tok forgemap init src/` |
+| Redact secrets in context | `tok --security proxy …` or enable in config |
+| Custom filter for your stack | `.tok/*.toml` + `tok trust` |
+| Everything else | `tok man` |
+
+**Implementing filters or hooks?** Start with **[docs/contributing/TECHNICAL.md](docs/contributing/TECHNICAL.md)** (flow + folder map), then **[docs/contributing/ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)** and **[src/cmds/README.md](src/cmds/README.md#adding-a-new-command-filter)**.
+
 ## Documentation
 
-- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Fix common issues
-- **[INSTALL.md](INSTALL.md)** - Detailed installation guide
-- **[RELEASE.md](docs/contributing/RELEASE.md)** - Stable releases, Homebrew tap, maintainer checklist
-- **[ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)** - Technical architecture
-- **[SECURITY.md](SECURITY.md)** - Security policy and PR review process
-- **[SECURITY_LAYER.md](docs/SECURITY_LAYER.md)** - Optional security/privacy obfuscation layer
-- **[SLM_RUNTIME.md](docs/SLM_RUNTIME.md)** - Local SLM (llama.cpp) setup guide
-- **[AUDIT_GUIDE.md](docs/AUDIT_GUIDE.md)** - Token savings analytics guide
-- **[FORGEMAP.md](docs/FORGEMAP.md)** - ForgeMap code-indexing protocol specification
+- **[FEATURES.md](docs/usage/FEATURES.md)** — Complete functional reference (every command)
+- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — Fix common issues
+- **[INSTALL.md](INSTALL.md)** — Detailed installation guide
+- **[RELEASE.md](docs/contributing/RELEASE.md)** — Stable releases, Homebrew tap, maintainer checklist
+- **[TECHNICAL.md](docs/contributing/TECHNICAL.md)** — Request lifecycle, module map
+- **[ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)** — Design depth, ADR-style detail
+- **[DEVELOPMENT.md](docs/contributing/DEVELOPMENT.md)** — Build, test, release from a clone
+- **[SECURITY.md](SECURITY.md)** — Security policy and PR review process
+- **[SECURITY_LAYER.md](docs/SECURITY_LAYER.md)** — Optional security/privacy obfuscation layer
+- **[SLM_RUNTIME.md](docs/SLM_RUNTIME.md)** — Local SLM (llama.cpp) setup guide
+- **[AUDIT_GUIDE.md](docs/usage/AUDIT_GUIDE.md)** — Token savings analytics guide
+- **[TRACKING.md](docs/usage/TRACKING.md)** — SQLite metrics schema & retention
+- **[FORGEMAP.md](docs/FORGEMAP.md)** — ForgeMap / CodeDNA protocol specification
 
 ## Privacy & Telemetry
 

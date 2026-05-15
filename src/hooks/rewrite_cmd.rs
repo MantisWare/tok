@@ -1,6 +1,7 @@
 //! Translates a raw shell command into its TOK-optimized equivalent.
 
 use super::permissions::{check_command, PermissionVerdict};
+use crate::core::client::apply_hook_client_prefix;
 use crate::discover::registry;
 use std::io::Write;
 
@@ -28,19 +29,22 @@ pub fn run(cmd: &str) -> anyhow::Result<()> {
     }
 
     match registry::rewrite_command(cmd, &excluded) {
-        Some(rewritten) => match verdict {
-            PermissionVerdict::Allow => {
-                print!("{}", rewritten);
-                let _ = std::io::stdout().flush();
-                Ok(())
+        Some(rewritten) => {
+            let rewritten = apply_hook_client_prefix(&rewritten);
+            match verdict {
+                PermissionVerdict::Allow => {
+                    print!("{}", rewritten);
+                    let _ = std::io::stdout().flush();
+                    Ok(())
+                }
+                PermissionVerdict::Ask | PermissionVerdict::Default => {
+                    print!("{}", rewritten);
+                    let _ = std::io::stdout().flush();
+                    std::process::exit(3);
+                }
+                PermissionVerdict::Deny => unreachable!(),
             }
-            PermissionVerdict::Ask | PermissionVerdict::Default => {
-                print!("{}", rewritten);
-                let _ = std::io::stdout().flush();
-                std::process::exit(3);
-            }
-            PermissionVerdict::Deny => unreachable!(),
-        },
+        }
         None => {
             // No TOK equivalent. Exit 1 = passthrough.
             // Claude Code independently evaluates its own ask rules on the original cmd.

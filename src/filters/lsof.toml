@@ -1,0 +1,17 @@
+[filters.lsof]
+description = "Compact lsof output — truncate wide lines, cap rows"
+match_command = "^lsof\\b"
+strip_ansi = true
+strip_lines_matching = ["^\\s*$"]
+truncate_lines_at = 120
+max_lines = 35
+
+[[tests.lsof]]
+name = "short listing passes through"
+input = "COMMAND  PID USER   FD TYPE DEVICE SIZE/OFF NODE NAME\nbash    1234 user  cwd DIR   1,2      512    2 /home/user"
+expected = "COMMAND  PID USER   FD TYPE DEVICE SIZE/OFF NODE NAME\nbash    1234 user  cwd DIR   1,2      512    2 /home/user"
+
+[[tests.lsof]]
+name = "empty input passes through"
+input = ""
+expected = ""

@@ -1,0 +1,17 @@
+[filters.ss]
+description = "Compact ss socket listing — cap rows"
+match_command = "^ss\\b"
+strip_ansi = true
+strip_lines_matching = ["^\\s*$"]
+truncate_lines_at = 120
+max_lines = 35
+
+[[tests.ss]]
+name = "short listing passes through"
+input = "State  Recv-Q Send-Q Local Address:Port Peer Address:Port\nLISTEN 0      128          0.0.0.0:22        0.0.0.0:*"
+expected = "State  Recv-Q Send-Q Local Address:Port Peer Address:Port\nLISTEN 0      128          0.0.0.0:22        0.0.0.0:*"
+
+[[tests.ss]]
+name = "empty input passes through"
+input = ""
+expected = ""

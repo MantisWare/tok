@@ -5,8 +5,12 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::io::{self, Read};
 
+use crate::core::client::prefix_command_with_client;
 use crate::discover::registry::rewrite_command;
 use crate::hooks::permissions::{check_command, PermissionVerdict};
+
+const CLIENT_COPILOT: &str = "copilot";
+const CLIENT_GEMINI: &str = "gemini";
 
 // ── Copilot hook (VS Code + Copilot CLI) ──────────────────────
 
@@ -126,12 +130,13 @@ fn handle_vscode(cmd: &str) -> Result<()> {
         _ => "ask",
     };
 
+    let tagged = prefix_command_with_client(&rewritten, CLIENT_COPILOT);
     let output = json!({
         "hookSpecificOutput": {
             "hookEventName": PRE_TOOL_USE_KEY,
             "permissionDecision": decision,
             "permissionDecisionReason": "TOK auto-rewrite",
-            "updatedInput": { "command": rewritten }
+            "updatedInput": { "command": tagged }
         }
     });
     println!("{output}");
@@ -144,11 +149,12 @@ fn handle_copilot_cli(cmd: &str) -> Result<()> {
         None => return Ok(()),
     };
 
+    let tagged = prefix_command_with_client(&rewritten, CLIENT_COPILOT);
     let output = json!({
         "permissionDecision": "deny",
         "permissionDecisionReason": format!(
             "Token savings: use `{}` instead (tok saves 60-90% tokens)",
-            rewritten
+            tagged
         )
     });
     println!("{output}");
@@ -193,7 +199,10 @@ pub fn run_gemini() -> Result<()> {
 
     // Delegate to the single source of truth for command rewriting
     match rewrite_command(cmd, &[]) {
-        Some(rewritten) => print_rewrite(&rewritten),
+        Some(rewritten) => {
+            let tagged = prefix_command_with_client(&rewritten, CLIENT_GEMINI);
+            print_rewrite(&tagged);
+        }
         None => print_allow(),
     }
 

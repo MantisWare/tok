@@ -698,6 +698,45 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_jq_supported() {
+        assert_eq!(
+            classify_command("jq . package.json"),
+            Classification::Supported {
+                tok_equivalent: "tok jq",
+                category: "Files",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_git_blame_supported() {
+        assert_eq!(
+            classify_command("git blame src/main.rs"),
+            Classification::Supported {
+                tok_equivalent: "tok git",
+                category: "Git",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_fd_supported() {
+        assert_eq!(
+            classify_command("fd -e rs"),
+            Classification::Supported {
+                tok_equivalent: "tok fd",
+                category: "Files",
+                estimated_savings_pct: 70.0,
+                status: TokStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
     fn test_classify_env_prefix_stripped() {
         assert_eq!(
             classify_command("GIT_SSH_COMMAND=ssh git push"),

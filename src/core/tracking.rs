@@ -61,6 +61,7 @@ fn project_filter_params(project_path: Option<&str>) -> (Option<String>, Option<
     }
 }
 
+use super::client::{display_client_name, resolve_client_id};
 use super::constants::{DEFAULT_HISTORY_DAYS, HISTORY_DB, TOK_DATA_DIR};
 
 /// Main tracking interface for recording and querying command history.
@@ -127,10 +128,29 @@ pub struct GainSummary {
     pub total_time_ms: u64,
     /// Average execution time per command (milliseconds)
     pub avg_time_ms: u64,
-    /// Top 10 commands by tokens saved: (cmd, count, saved, avg_pct, avg_time_ms)
+    /// Top commands by tokens saved: (cmd, count, saved, avg_pct, avg_time_ms)
     pub by_command: Vec<(String, usize, usize, f64, u64)>,
     /// Last 30 days of activity: (date, saved_tokens)
     pub by_day: Vec<(String, usize)>,
+    /// Per-client breakdown (cursor, claude, terminal, …)
+    pub by_client: Vec<ClientStats>,
+}
+
+/// Token savings aggregated by client (`TOK_CLIENT` / hook attribution).
+#[derive(Debug, Clone, Serialize)]
+pub struct ClientStats {
+    /// Client id (e.g. `cursor`, `claude`, `terminal`)
+    pub client: String,
+    /// Number of commands from this client
+    pub commands: usize,
+    /// Total input tokens
+    pub input_tokens: usize,
+    /// Total output tokens
+    pub output_tokens: usize,
+    /// Total tokens saved
+    pub saved_tokens: usize,
+    /// Savings percentage for this client
+    pub savings_pct: f64,
 }
 
 /// Row counts removed by [`Tracker::clear_tracking`].
@@ -232,6 +252,109 @@ pub struct MonthStats {
 /// Type alias for command statistics tuple: (command, count, saved_tokens, avg_savings_pct, avg_time_ms)
 type CommandStats = (String, usize, usize, f64, u64);
 
+/// Default number of rows in `tok gain` "By Command" table.
+pub const DEFAULT_GAIN_TOP: usize = 10;
+/// Maximum for `tok gain --top`.
+pub const MAX_GAIN_TOP: usize = 100;
+
+/// Options for the per-command breakdown in [`GainSummary`].
+#[derive(Debug, Clone, Copy)]
+pub struct GainByCommandOptions {
+    /// How many commands to show (clamped to [`MAX_GAIN_TOP`]).
+    pub limit: usize,
+    /// When true, aggregate by base tool (`cargo`, `grep`, `toml:jq`, …).
+    pub rollup: bool,
+}
+
+impl Default for GainByCommandOptions {
+    fn default() -> Self {
+        Self {
+            limit: DEFAULT_GAIN_TOP,
+            rollup: false,
+        }
+    }
+}
+
+/// Clamp `tok gain --top` to a sane range.
+pub fn clamp_gain_top(top: usize) -> usize {
+    top.clamp(1, MAX_GAIN_TOP)
+}
+
+/// Map a stored `tok_cmd` to a rollup bucket for `tok gain --rollup`.
+pub fn rollup_command_key(tok_cmd: &str) -> String {
+    if let Some(rest) = tok_cmd.strip_prefix("tok:toml ") {
+        let base = rest.split_whitespace().next().unwrap_or("toml");
+        return format!("toml:{base}");
+    }
+    if tok_cmd.starts_with("tok fallback:") {
+        return "fallback".to_string();
+    }
+    let mut parts = tok_cmd.split_whitespace();
+    if parts.next() == Some("tok") {
+        if let Some(tool) = parts.next() {
+            return tool.to_string();
+        }
+    }
+    tok_cmd.to_string()
+}
+
+struct RollupAcc {
+    count: usize,
+    saved: usize,
+    pct_saved_product: f64,
+    time_count_product: u64,
+}
+
+/// Apply optional rollup and limit to raw per-`tok_cmd` aggregates.
+fn finalize_by_command(
+    rows: Vec<CommandStats>,
+    limit: usize,
+    rollup: bool,
+) -> Vec<CommandStats> {
+    let limit = clamp_gain_top(limit);
+    if rows.is_empty() {
+        return rows;
+    }
+
+    let mut out: Vec<CommandStats> = if rollup {
+        let mut map: std::collections::BTreeMap<String, RollupAcc> = std::collections::BTreeMap::new();
+        for (cmd, count, saved, pct, avg_time) in rows {
+            let key = rollup_command_key(&cmd);
+            let acc = map.entry(key).or_insert(RollupAcc {
+                count: 0,
+                saved: 0,
+                pct_saved_product: 0.0,
+                time_count_product: 0,
+            });
+            acc.count += count;
+            acc.saved += saved;
+            acc.pct_saved_product += pct * saved as f64;
+            acc.time_count_product += avg_time.saturating_mul(count as u64);
+        }
+        map.into_iter()
+            .map(|(key, acc)| {
+                let pct = if acc.saved > 0 {
+                    acc.pct_saved_product / acc.saved as f64
+                } else {
+                    0.0
+                };
+                let avg_time = if acc.count > 0 {
+                    acc.time_count_product / acc.count as u64
+                } else {
+                    0
+                };
+                (key, acc.count, acc.saved, pct, avg_time)
+            })
+            .collect()
+    } else {
+        rows
+    };
+
+    out.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| b.1.cmp(&a.1)));
+    out.truncate(limit);
+    out
+}
+
 impl Tracker {
     /// Create a new tracker instance.
     ///
@@ -316,6 +439,11 @@ impl Tracker {
             "CREATE INDEX IF NOT EXISTS idx_project_path_timestamp ON commands(project_path, timestamp)",
             [],
         );
+        let _ = conn.execute("ALTER TABLE commands ADD COLUMN client TEXT DEFAULT ''", []);
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_client_timestamp ON commands(client, timestamp)",
+            [],
+        );
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS parse_failures (
@@ -373,15 +501,17 @@ impl Tracker {
         };
 
         let project_path = current_project_path_string(); // added: record cwd
+        let client = resolve_client_id();
 
         self.conn.execute(
-            "INSERT INTO commands (timestamp, original_cmd, tok_cmd, project_path, input_tokens, output_tokens, saved_tokens, savings_pct, exec_time_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", // added: project_path
+            "INSERT INTO commands (timestamp, original_cmd, tok_cmd, project_path, client, input_tokens, output_tokens, saved_tokens, savings_pct, exec_time_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 Utc::now().to_rfc3339(),
                 original_cmd,
                 tok_cmd,
-                project_path, // added
+                project_path,
+                client,
                 input_tokens as i64,
                 output_tokens as i64,
                 saved as i64,
@@ -515,6 +645,15 @@ impl Tracker {
     /// When `project_path` is `Some`, matches the exact working directory
     /// or any subdirectory (prefix match with path separator).
     pub fn get_summary_filtered(&self, project_path: Option<&str>) -> Result<GainSummary> {
+        self.get_summary_filtered_with_options(project_path, GainByCommandOptions::default())
+    }
+
+    /// Like [`get_summary_filtered`] with configurable per-command table options.
+    pub fn get_summary_filtered_with_options(
+        &self,
+        project_path: Option<&str>,
+        by_command_opts: GainByCommandOptions,
+    ) -> Result<GainSummary> {
         let (project_exact, project_glob) = project_filter_params(project_path); // added
         let mut total_commands = 0usize;
         let mut total_input = 0usize;
@@ -559,8 +698,11 @@ impl Tracker {
             0
         };
 
-        let by_command = self.get_by_command(project_path)?; // added: pass project filter
-        let by_day = self.get_by_day(project_path)?; // added: pass project filter
+        let raw_by_command = self.get_by_command_raw(project_path)?;
+        let by_command =
+            finalize_by_command(raw_by_command, by_command_opts.limit, by_command_opts.rollup);
+        let by_day = self.get_by_day(project_path)?;
+        let by_client = self.get_by_client(project_path)?;
 
         Ok(GainSummary {
             total_commands,
@@ -572,25 +714,58 @@ impl Tracker {
             avg_time_ms,
             by_command,
             by_day,
+            by_client,
         })
     }
 
-    fn get_by_command(
-        &self,
-        project_path: Option<&str>, // added
-    ) -> Result<Vec<CommandStats>> {
-        let (project_exact, project_glob) = project_filter_params(project_path); // added
+    /// Per-client savings breakdown for `tok gain --by-client`.
+    pub fn get_by_client(&self, project_path: Option<&str>) -> Result<Vec<ClientStats>> {
+        let (project_exact, project_glob) = project_filter_params(project_path);
+        let mut stmt = self.conn.prepare(
+            "SELECT client,
+                    COUNT(*) as commands,
+                    SUM(input_tokens) as input,
+                    SUM(output_tokens) as output,
+                    SUM(saved_tokens) as saved
+             FROM commands
+             WHERE (?1 IS NULL OR project_path = ?1 OR project_path GLOB ?2)
+             GROUP BY client
+             ORDER BY SUM(saved_tokens) DESC",
+        )?;
+
+        let rows = stmt.query_map(params![project_exact, project_glob], |row| {
+            let raw_client: String = row.get(0)?;
+            let input = row.get::<_, i64>(2)? as usize;
+            let saved = row.get::<_, i64>(4)? as usize;
+            let savings_pct = if input > 0 {
+                (saved as f64 / input as f64) * 100.0
+            } else {
+                0.0
+            };
+            Ok(ClientStats {
+                client: display_client_name(&raw_client).to_string(),
+                commands: row.get::<_, i64>(1)? as usize,
+                input_tokens: input,
+                output_tokens: row.get::<_, i64>(3)? as usize,
+                saved_tokens: saved,
+                savings_pct,
+            })
+        })?;
+
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    fn get_by_command_raw(&self, project_path: Option<&str>) -> Result<Vec<CommandStats>> {
+        let (project_exact, project_glob) = project_filter_params(project_path);
         let mut stmt = self.conn.prepare(
             "SELECT tok_cmd, COUNT(*), SUM(saved_tokens), AVG(savings_pct), AVG(exec_time_ms)
              FROM commands
              WHERE (?1 IS NULL OR project_path = ?1 OR project_path GLOB ?2)
              GROUP BY tok_cmd
-             ORDER BY SUM(saved_tokens) DESC
-             LIMIT 10", // added: project filter in WHERE
+             ORDER BY SUM(saved_tokens) DESC",
         )?;
 
         let rows = stmt.query_map(params![project_exact, project_glob], |row| {
-            // added: params
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)? as usize,
@@ -1249,6 +1424,30 @@ mod tests {
         assert_eq!(args_display(&single), "log");
     }
 
+    // 3b. Client attribution via TOK_CLIENT
+    #[test]
+    fn test_tracker_client_attribution() {
+        use std::env;
+        let _guard = tracking_test_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("hist-client.db");
+        env::set_var("TOK_DB_PATH", &db);
+        env::set_var(crate::core::client::ENV_TOK_CLIENT, "cursor");
+        let tracker = Tracker::new().expect("tracker");
+        tracker
+            .record("git status", "tok git status", 100, 20, 5)
+            .expect("record");
+        let by_client = tracker.get_by_client(None).expect("by_client");
+        assert!(
+            by_client
+                .iter()
+                .any(|c| c.client == "cursor" && c.saved_tokens == 80),
+            "expected cursor client row: {by_client:?}"
+        );
+        env::remove_var("TOK_DB_PATH");
+        env::remove_var(crate::core::client::ENV_TOK_CLIENT);
+    }
+
     // 3. Tracker::record + get_recent — round-trip DB
     #[test]
     fn test_tracker_record_and_recent() {
@@ -1502,6 +1701,35 @@ mod tests {
         assert_eq!(pf.total, 0);
 
         env::remove_var("TOK_DB_PATH");
+    }
+
+    #[test]
+    fn test_rollup_command_key() {
+        assert_eq!(rollup_command_key("tok cargo test"), "cargo");
+        assert_eq!(rollup_command_key("tok grep"), "grep");
+        assert_eq!(rollup_command_key("tok:toml jq ."), "toml:jq");
+        assert_eq!(
+            rollup_command_key("tok fallback: make"),
+            "fallback"
+        );
+    }
+
+    #[test]
+    fn test_finalize_by_command_top_and_rollup() {
+        let rows = vec![
+            ("tok cargo test".into(), 2, 100, 90.0, 10),
+            ("tok cargo build".into(), 1, 50, 80.0, 20),
+            ("tok grep".into(), 5, 200, 75.0, 5),
+        ];
+        let limited = finalize_by_command(rows.clone(), 2, false);
+        assert_eq!(limited.len(), 2);
+        assert_eq!(limited[0].0, "tok grep");
+
+        let rolled = finalize_by_command(rows, 10, true);
+        assert_eq!(rolled.len(), 2);
+        let cargo = rolled.iter().find(|r| r.0 == "cargo").expect("cargo");
+        assert_eq!(cargo.1, 3);
+        assert_eq!(cargo.2, 150);
     }
 
     // 15. clear_tracking (project) deletes only matching project_path rows

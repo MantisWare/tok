@@ -1,0 +1,17 @@
+[filters.host]
+description = "Compact host DNS lookup output"
+match_command = "^host\\b"
+strip_ansi = true
+strip_lines_matching = ["^\\s*$"]
+truncate_lines_at = 120
+max_lines = 20
+
+[[tests.host]]
+name = "lookup line preserved"
+input = "example.com has address 93.184.216.34\nexample.com mail is handled by 0 ."
+expected = "example.com has address 93.184.216.34\nexample.com mail is handled by 0 ."
+
+[[tests.host]]
+name = "empty input passes through"
+input = ""
+expected = ""

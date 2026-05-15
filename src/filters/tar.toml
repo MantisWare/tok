@@ -1,0 +1,17 @@
+[filters.tar]
+description = "Compact tar listing output (tar -t / -tv)"
+match_command = "^tar\\b"
+strip_ansi = true
+strip_lines_matching = ["^\\s*$"]
+truncate_lines_at = 120
+max_lines = 40
+
+[[tests.tar]]
+name = "archive listing passes through under cap"
+input = "src/main.rs\nsrc/lib.rs\nCargo.toml"
+expected = "src/main.rs\nsrc/lib.rs\nCargo.toml"
+
+[[tests.tar]]
+name = "empty input passes through"
+input = ""
+expected = ""
