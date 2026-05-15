@@ -3,7 +3,7 @@
     "PreToolUse": [
       {
         "type": "command",
-        "command": "tok hook",
+        "command": "tok hook copilot",
         "cwd": ".",
         "timeout": 5
       }

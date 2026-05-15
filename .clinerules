@@ -1,62 +1,68 @@
-# TOK — Token-Optimized CLI
+# TOK - Token Optimization Kit (Cline)
 
-**tok** is a CLI proxy that filters and compresses command outputs, saving 60-90% tokens. Always prefix shell commands with `tok`. If TOK has a filter, it compresses; if not, it passes through unchanged.
+**Usage**: Token-optimized CLI proxy (60-90% savings on dev operations).
 
 ## Rule
 
-Always prefix shell commands with `tok`:
+Always prefix shell commands with `tok` to minimize token consumption. If TOK has a filter, it compresses the output. If not, it passes through unchanged. TOK is always safe to use.
 
+Even in command chains: `tok git add . && tok git commit -m "msg" && tok git push`
+
+## Filters by Category
+
+### Git & GitHub
 ```bash
-# Instead of:              Use:
-git status                 tok git status
-git log -10                tok git log -10
-cargo test                 tok cargo test
-docker ps                  tok docker ps
-kubectl get pods           tok kubectl pods
-```
-
-Even in chains: `tok git add . && tok git commit -m "msg" && tok git push`
-
-## Filters (60+ tools)
-
-```bash
-# Git & GitHub
 tok git status / log / diff / show / add / commit / push / pull / branch / fetch / stash
 tok gh pr view <n> / gh issue list / gh run list
+```
 
-# Build & Compile
+### Build & Compile
+```bash
 tok cargo build / check / clippy
 tok tsc / lint / prettier --check . / next build
 tok dotnet build / go build / go vet
+```
 
-# Test
+### Test
+```bash
 tok cargo test / vitest run / playwright test / pytest
 tok go test ./... / rspec / rake test / dotnet test
-tok test <cmd>
+tok test <cmd>             # Generic wrapper — failures only
+```
 
-# Package Managers
+### Package Managers
+```bash
 tok pnpm install / list / outdated
-tok npm run <script> / npx <cmd> / pip install / deps
+tok npm run <script> / npx <cmd>
+tok pip install / list / deps
+```
 
-# Files & Search
-tok ls / tree / read <file> / smart <file>
-tok find / grep / wc / diff / json / env / log
-tok err <cmd> / summary <cmd>
+### Files, Search & Utilities
+```bash
+tok ls <path> / tree / read <file> / smart <file>
+tok find . -name '*.rs' / grep <pattern> / wc <file>
+tok diff / json <file> / env / log <file>
+tok err <cmd> / summary <cmd> / curl <url> / wget <url>
+```
 
-# Infrastructure & Network
-tok docker ps / images / logs / compose
+### Infrastructure
+```bash
+tok docker ps / images / logs / compose ps
 tok kubectl pods / services / logs
 tok aws <cmd> / psql <cmd>
-tok curl <url> / wget <url>
+```
 
-# Linting & Formatting
+### Linting & Formatting
+```bash
 tok ruff check . / mypy . / rubocop / golangci-lint run / format
+```
 
-# Stacked PRs (Graphite)
+### Stacked PRs (Graphite)
+```bash
 tok gt log / submit / sync / restack / create / branch
 ```
 
-## Code Intelligence
+## Code Intelligence (use when needed)
 
 ```bash
 tok mem index <dir>        # Index symbols and structure
@@ -87,12 +93,12 @@ tok gain                   # Token savings dashboard
 tok gain --graph           # ASCII graph of daily savings
 tok gain --history         # Per-command savings history
 tok cc-economics           # Claude spend vs tok savings
-tok discover               # Find missed tok opportunities
+tok discover               # Find missed TOK opportunities
 tok session                # Usage stats across sessions
 tok learn                  # Learn CLI fixes from past mistakes
 ```
 
-## Configuration
+## Configuration & Debugging
 
 ```bash
 tok config                 # View or scaffold tok config
@@ -105,8 +111,8 @@ tok man <topic>            # Filter manual (e.g. tok man security)
 
 ## Useful Flags
 
-- `-u` / `--ultra-compact` — maximum compression
-- `--security` / `--security-mode <mode>` — privacy layer
+- `-u` / `--ultra-compact` — maximum compression mode
+- `--security` / `--security-mode <mode>` — privacy/obfuscation layer
 - `-v` / `-vv` / `-vvv` — increase verbosity
 
 ## Verification
@@ -118,3 +124,7 @@ which tok                  # Verify correct binary
 ```
 
 > **Different tool**: If `tok gain` fails, confirm you installed Token Optimization Kit (MantisWare/tok). Rust Type Kit is `reachingforthejack/rtk` (usually the `rtk` command).
+
+## Why
+
+TOK filters and compresses command output before it reaches the LLM context, saving 60-90% tokens on common operations. Always use `tok <cmd>` instead of raw commands.
