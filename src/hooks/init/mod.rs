@@ -7,8 +7,10 @@ use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
 use super::constants::{
-    BEFORE_TOOL_KEY, GEMINI_HOOK_FILE, HOOKS_JSON, HOOKS_SUBDIR, PRE_TOOL_USE_KEY,
-    REWRITE_HOOK_FILE, SETTINGS_JSON,
+    AFTER_AGENT_KEY, BEFORE_AGENT_KEY, BEFORE_TOOL_KEY, GEMINI_HOOK_FILE, HOOKS_JSON, HOOKS_SUBDIR,
+    MEMORY_CACHE_PROMPT_HOOK_FILE, MEMORY_EXTRACT_HOOK_FILE, MEMORY_PROMPT_HOOK_FILE,
+    MEMORY_SESSION_HOOK_FILE, PRE_TOOL_USE_KEY, REWRITE_HOOK_FILE, SESSION_START_KEY,
+    SETTINGS_JSON, STOP_KEY, USER_PROMPT_SUBMIT_KEY,
 };
 use super::integrity;
 
@@ -28,6 +30,13 @@ const CURSOR_REWRITE_HOOK: &str = include_str!("../../../hooks/cursor/tok-rewrit
 // Embedded Cursor sessionStart hook (injects tok awareness into conversation context)
 const CURSOR_SESSION_HOOK: &str = include_str!("../../../hooks/cursor/tok-session.sh");
 const SESSION_HOOK_FILE: &str = "tok-session.sh";
+
+const MEMORY_SESSION_HOOK: &str = include_str!("../../../hooks/shared/tok-memory-session.sh");
+const MEMORY_PROMPT_HOOK: &str = include_str!("../../../hooks/shared/tok-memory-prompt.sh");
+const MEMORY_EXTRACT_HOOK: &str = include_str!("../../../hooks/shared/tok-memory-extract.sh");
+const MEMORY_CACHE_PROMPT_HOOK: &str =
+    include_str!("../../../hooks/shared/tok-memory-cache-prompt.sh");
+const MEMORY_HOOK_MARKER: &str = "tok-memory-";
 
 // Embedded OpenCode plugin (auto-rewrite)
 const OPENCODE_PLUGIN: &str = include_str!("../../../hooks/opencode/tok.ts");
@@ -286,6 +295,32 @@ tok mem complexity <fn> # Cyclomatic complexity estimate
 tok mem repos           # List all indexed repositories
 tok mem status          # Index stats and health
 tok mem forget <repo>   # Remove indexed repo from memory DB
+```
+
+### Agent Memory (`tok memory` — not `tok mem`)
+Rules, preferences, and project facts for LLM sessions. **Enabled by default** after `tok init -g`. Hooks inject at session start; auto-extract after turns.
+
+```bash
+tok memory status              # DB path, counts, enabled flags
+tok memory on / off            # Enable or disable agent memory
+tok memory extraction true     # Toggle auto-extraction (add after turns)
+tok memory add "<text>"        # Store rule/preference (--type, --project)
+tok memory search "<query>"    # Scoped search (BM25 + hybrid scoring)
+tok memory list                # List memories (--type, --status)
+tok memory show <id>           # Show one record
+tok memory forget <id>         # Delete permanently
+tok memory archive <id>        # Archive without deleting
+tok memory reject <id>         # Mark rejected (won't inject)
+tok memory inspect-context "<q>"  # Preview injected context pack
+tok memory export --format json   # Backup vault (-o path)
+tok memory import <file>       # Restore from export
+tok memory clear --project     # Clear project-scoped memories
+tok hook memory-retrieve --json   # sessionStart hook (Cursor, etc.)
+tok hook memory-extract           # Post-turn extract (JSON stdin)
+```
+
+### ForgeMap
+```bash
 tok forgemap init       # Inject ForgeMap headers into source files
 tok forgemap update     # Annotate only files missing a header
 tok forgemap check      # Coverage report — exit 1 if unannotated
@@ -425,6 +460,16 @@ pub fn run(
     // Cursor hooks (additive, installed alongside Claude Code)
     if install_cursor {
         install_cursor_hooks(verbose)?;
+    }
+
+    if global {
+        if let Err(e) = crate::agent_memory::service::ensure_on_init() {
+            if verbose > 0 {
+                eprintln!("[warn] Agent memory setup: {e}");
+            }
+        } else if verbose > 0 {
+            println!("[ok] Agent memory enabled (tok memory)");
+        }
     }
 
     println!();
@@ -644,7 +689,9 @@ fn remove_hook_from_settings(verbose: u8) -> Result<bool> {
     let mut root: serde_json::Value = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse {} as JSON", settings_path.display()))?;
 
-    let removed = remove_hook_from_json(&mut root);
+    let removed_rewrite = remove_hook_from_json(&mut root);
+    let removed_memory = remove_memory_hooks_from_claude_json(&mut root);
+    let removed = removed_rewrite || removed_memory;
 
     if removed {
         // Backup original
@@ -885,6 +932,13 @@ fn patch_settings_json(
     // Deep-merge hook
     insert_hook_entry(&mut root, hook_command);
 
+    if let Some(hooks_dir) = hook_path.parent() {
+        install_memory_hook_scripts(hooks_dir, "claude", verbose)?;
+        if patch_claude_memory_hooks(&mut root, hooks_dir) && verbose > 0 {
+            eprintln!("settings.json: agent memory hooks added");
+        }
+    }
+
     // Backup original
     if settings_path.exists() {
         let backup_path = settings_path.with_extension("json.bak");
@@ -980,6 +1034,244 @@ fn insert_hook_entry(root: &mut serde_json::Value, hook_command: &str) {
             "command": hook_command
         }]
     }));
+}
+
+/// Write shared memory hook scripts with a fixed `TOK_CLIENT`.
+#[cfg(unix)]
+fn install_memory_hook_scripts(hooks_dir: &Path, client: &str, verbose: u8) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scripts = [
+        (MEMORY_SESSION_HOOK_FILE, MEMORY_SESSION_HOOK),
+        (MEMORY_PROMPT_HOOK_FILE, MEMORY_PROMPT_HOOK),
+        (MEMORY_EXTRACT_HOOK_FILE, MEMORY_EXTRACT_HOOK),
+    ];
+
+    for (name, template) in scripts {
+        let path = hooks_dir.join(name);
+        let content = render_memory_hook_script(template, client);
+        write_if_changed(&path, &content, name, verbose)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("Failed to set permissions on {}", path.display()))?;
+    }
+
+    if client == "cursor" {
+        let path = hooks_dir.join(MEMORY_CACHE_PROMPT_HOOK_FILE);
+        write_if_changed(
+            &path,
+            MEMORY_CACHE_PROMPT_HOOK,
+            MEMORY_CACHE_PROMPT_HOOK_FILE,
+            verbose,
+        )?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("Failed to set permissions on {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn install_memory_hook_scripts(_hooks_dir: &Path, _client: &str, _verbose: u8) -> Result<()> {
+    Ok(())
+}
+
+fn render_memory_hook_script(template: &str, client: &str) -> String {
+    let mut out = String::new();
+    for line in template.lines() {
+        out.push_str(line);
+        out.push('\n');
+        if line.starts_with("#!") {
+            out.push_str(&format!("export TOK_CLIENT={client}\n"));
+        }
+    }
+    out
+}
+
+/// Add Claude Code memory hooks (SessionStart, UserPromptSubmit, Stop).
+fn patch_claude_memory_hooks(root: &mut serde_json::Value, hooks_dir: &Path) -> bool {
+    let session = hooks_dir.join(MEMORY_SESSION_HOOK_FILE);
+    let prompt = hooks_dir.join(MEMORY_PROMPT_HOOK_FILE);
+    let extract = hooks_dir.join(MEMORY_EXTRACT_HOOK_FILE);
+
+    let mut changed = false;
+    changed |= insert_claude_hook_command(root, SESSION_START_KEY, &session);
+    changed |= insert_claude_hook_command(root, USER_PROMPT_SUBMIT_KEY, &prompt);
+    changed |= insert_claude_hook_command(root, STOP_KEY, &extract);
+    changed
+}
+
+fn insert_claude_hook_command(root: &mut serde_json::Value, event: &str, command: &Path) -> bool {
+    if claude_hook_command_present(root, event, MEMORY_HOOK_MARKER) {
+        return false;
+    }
+
+    let Some(cmd) = command.to_str() else {
+        return false;
+    };
+
+    let root_obj = match root.as_object_mut() {
+        Some(obj) => obj,
+        None => {
+            *root = serde_json::json!({});
+            root.as_object_mut().expect("root object")
+        }
+    };
+
+    let hooks = root_obj
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("hooks object");
+
+    let event_arr = hooks
+        .entry(event)
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .expect("hook event array");
+
+    event_arr.push(serde_json::json!({
+        "hooks": [{
+            "type": "command",
+            "command": cmd
+        }]
+    }));
+
+    true
+}
+
+fn claude_hook_command_present(root: &serde_json::Value, event: &str, needle: &str) -> bool {
+    root.get("hooks")
+        .and_then(|h| h.get(event))
+        .and_then(|p| p.as_array())
+        .is_some_and(|arr| {
+            arr.iter()
+                .filter_map(|entry| entry.get("hooks")?.as_array())
+                .flatten()
+                .filter_map(|hook| hook.get("command")?.as_str())
+                .any(|cmd| cmd.contains(needle))
+        })
+}
+
+fn remove_memory_hooks_from_claude_json(root: &mut serde_json::Value) -> bool {
+    let events = [SESSION_START_KEY, USER_PROMPT_SUBMIT_KEY, STOP_KEY];
+    let mut any = false;
+    for event in events {
+        let Some(arr) = root
+            .pointer_mut(&format!("/hooks/{event}"))
+            .and_then(|v| v.as_array_mut())
+        else {
+            continue;
+        };
+        let before = arr.len();
+        arr.retain(|entry| {
+            let has_memory = entry
+                .get("hooks")
+                .and_then(|h| h.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|hook| hook.get("command").and_then(|c| c.as_str()))
+                .any(|cmd| cmd.contains(MEMORY_HOOK_MARKER));
+            !has_memory
+        });
+        if arr.len() < before {
+            any = true;
+        }
+    }
+    any
+}
+
+/// Add Gemini CLI memory hooks (SessionStart, BeforeAgent, AfterAgent).
+fn patch_gemini_memory_hooks(settings: &mut serde_json::Value, hooks_dir: &Path) -> Result<bool> {
+    install_memory_hook_scripts(hooks_dir, "gemini", 0)?;
+
+    let session = hooks_dir.join(MEMORY_SESSION_HOOK_FILE);
+    let prompt = hooks_dir.join(MEMORY_PROMPT_HOOK_FILE);
+    let extract = hooks_dir.join(MEMORY_EXTRACT_HOOK_FILE);
+
+    let mut changed = false;
+    changed |= insert_gemini_hook_command(settings, SESSION_START_KEY, &session, None);
+    changed |= insert_gemini_hook_command(settings, BEFORE_AGENT_KEY, &prompt, None);
+    changed |= insert_gemini_hook_command(settings, AFTER_AGENT_KEY, &extract, None);
+    Ok(changed)
+}
+
+fn insert_gemini_hook_command(
+    settings: &mut serde_json::Value,
+    event: &str,
+    command: &Path,
+    matcher: Option<&str>,
+) -> bool {
+    if gemini_hook_command_present(settings, event, MEMORY_HOOK_MARKER) {
+        return false;
+    }
+
+    let cmd = command
+        .to_str()
+        .expect("memory hook path must be valid UTF-8");
+
+    let mut entry = serde_json::json!({
+        "hooks": [{
+            "type": "command",
+            "command": cmd
+        }]
+    });
+    if let Some(m) = matcher {
+        entry["matcher"] = serde_json::json!(m);
+    }
+
+    let hooks = settings
+        .as_object_mut()
+        .expect("settings object")
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("hooks object");
+
+    let event_arr = hooks
+        .entry(event)
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .expect("event array");
+
+    event_arr.push(entry);
+    true
+}
+
+fn gemini_hook_command_present(settings: &serde_json::Value, event: &str, needle: &str) -> bool {
+    settings
+        .pointer(&format!("/hooks/{event}"))
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| {
+            arr.iter().any(|h| {
+                h.pointer("/hooks/0/command")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|cmd| cmd.contains(needle))
+            })
+        })
+}
+
+fn remove_memory_hooks_from_gemini_json(settings: &mut serde_json::Value) -> bool {
+    let events = [SESSION_START_KEY, BEFORE_AGENT_KEY, AFTER_AGENT_KEY];
+    let mut any = false;
+    for event in events {
+        let pointer = format!("/hooks/{event}");
+        let Some(arr) = settings
+            .pointer_mut(&pointer)
+            .and_then(|v| v.as_array_mut())
+        else {
+            continue;
+        };
+        let before = arr.len();
+        arr.retain(|h| {
+            !h.pointer("/hooks/0/command")
+                .and_then(|c| c.as_str())
+                .is_some_and(|cmd| cmd.contains(MEMORY_HOOK_MARKER))
+        });
+        if arr.len() < before {
+            any = true;
+        }
+    }
+    any
 }
 
 /// Check if TOK hook is already present in settings.json
@@ -1735,6 +2027,8 @@ fn install_cursor_hooks(verbose: u8) -> Result<()> {
         verbose,
     )?;
 
+    install_memory_hook_scripts(&hooks_dir, "cursor", verbose)?;
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1753,7 +2047,7 @@ fn install_cursor_hooks(verbose: u8) -> Result<()> {
         })?;
     }
 
-    // 3. Create or patch hooks.json (preToolUse + sessionStart)
+    // 3. Create or patch hooks.json (preToolUse + sessionStart + memory lifecycle)
     let hooks_json_path = cursor_dir.join(HOOKS_JSON);
     let patched = patch_cursor_hooks_json(&hooks_json_path, verbose)?;
 
@@ -1798,8 +2092,10 @@ fn patch_cursor_hooks_json(path: &Path, verbose: u8) -> Result<bool> {
 
     let has_rewrite = cursor_hook_entry_present(&root, "preToolUse", REWRITE_HOOK_FILE);
     let has_session = cursor_hook_entry_present(&root, "sessionStart", SESSION_HOOK_FILE);
+    let has_cache = cursor_hook_entry_present(&root, "beforeSubmitPrompt", MEMORY_HOOK_MARKER);
+    let has_extract = cursor_hook_entry_present(&root, "afterAgentResponse", MEMORY_HOOK_MARKER);
 
-    if has_rewrite && has_session {
+    if has_rewrite && has_session && has_cache && has_extract {
         if verbose > 0 {
             eprintln!("Cursor hooks.json: all TOK entries already present");
         }
@@ -1822,6 +2118,24 @@ fn patch_cursor_hooks_json(path: &Path, verbose: u8) -> Result<bool> {
             "sessionStart",
             serde_json::json!({
                 "command": format!("./hooks/{}", SESSION_HOOK_FILE)
+            }),
+        );
+    }
+    if !has_cache {
+        insert_cursor_hook_array_entry(
+            &mut root,
+            "beforeSubmitPrompt",
+            serde_json::json!({
+                "command": format!("./hooks/{}", MEMORY_CACHE_PROMPT_HOOK_FILE)
+            }),
+        );
+    }
+    if !has_extract {
+        insert_cursor_hook_array_entry(
+            &mut root,
+            "afterAgentResponse",
+            serde_json::json!({
+                "command": format!("./hooks/{}", MEMORY_EXTRACT_HOOK_FILE)
             }),
         );
     }
@@ -1897,7 +2211,14 @@ fn remove_cursor_hooks(verbose: u8) -> Result<Vec<String>> {
     let mut removed = Vec::new();
 
     // 1. Remove hook scripts
-    for file_name in [REWRITE_HOOK_FILE, SESSION_HOOK_FILE] {
+    for file_name in [
+        REWRITE_HOOK_FILE,
+        SESSION_HOOK_FILE,
+        MEMORY_SESSION_HOOK_FILE,
+        MEMORY_PROMPT_HOOK_FILE,
+        MEMORY_EXTRACT_HOOK_FILE,
+        MEMORY_CACHE_PROMPT_HOOK_FILE,
+    ] {
         let path = cursor_dir.join(HOOKS_SUBDIR).join(file_name);
         if path.exists() {
             fs::remove_file(&path)
@@ -1939,8 +2260,21 @@ fn remove_cursor_hooks(verbose: u8) -> Result<Vec<String>> {
 /// Remove all TOK entries from Cursor hooks.json (preToolUse + sessionStart).
 /// Returns true if any entry was found and removed.
 fn remove_cursor_hooks_from_json(root: &mut serde_json::Value) -> bool {
-    let tok_files = [REWRITE_HOOK_FILE, SESSION_HOOK_FILE];
-    let events = ["preToolUse", "sessionStart"];
+    let tok_files = [
+        REWRITE_HOOK_FILE,
+        SESSION_HOOK_FILE,
+        MEMORY_SESSION_HOOK_FILE,
+        MEMORY_PROMPT_HOOK_FILE,
+        MEMORY_EXTRACT_HOOK_FILE,
+        MEMORY_CACHE_PROMPT_HOOK_FILE,
+    ];
+    let events = [
+        "preToolUse",
+        "sessionStart",
+        "beforeSubmitPrompt",
+        "afterAgentResponse",
+        "stop",
+    ];
     let mut any_removed = false;
 
     for event in events {
@@ -2099,7 +2433,14 @@ fn show_claude_config() -> Result<()> {
             if let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) {
                 let hook_command = hook_path.display().to_string();
                 if hook_already_present(&root, &hook_command) {
-                    println!("[ok] settings.json: TOK hook configured");
+                    println!("[ok] settings.json: TOK rewrite hook configured");
+                    if claude_hook_command_present(&root, SESSION_START_KEY, MEMORY_HOOK_MARKER) {
+                        println!("[ok] settings.json: TOK agent memory hooks configured");
+                    } else {
+                        println!(
+                            "[--] settings.json: agent memory hooks missing (run: tok init -g --auto-patch)"
+                        );
+                    }
                 } else {
                     println!("[warn] settings.json: exists but TOK hook not configured");
                     println!("    Run: tok init -g --auto-patch");
@@ -2181,9 +2522,25 @@ fn show_claude_config() -> Result<()> {
                         cursor_hook_entry_present(&root, "preToolUse", REWRITE_HOOK_FILE);
                     let has_session =
                         cursor_hook_entry_present(&root, "sessionStart", SESSION_HOOK_FILE);
-                    if has_rewrite && has_session {
+                    let has_memory = cursor_hook_entry_present(
+                        &root,
+                        "beforeSubmitPrompt",
+                        MEMORY_CACHE_PROMPT_HOOK_FILE,
+                    ) && cursor_hook_entry_present(
+                        &root,
+                        "afterAgentResponse",
+                        MEMORY_EXTRACT_HOOK_FILE,
+                    );
+                    if has_rewrite && has_session && has_memory {
+                        println!(
+                            "[ok] Cursor hooks.json: TOK configured (rewrite + session + memory)"
+                        );
+                    } else if has_rewrite && has_session {
                         println!(
                             "[ok] Cursor hooks.json: TOK configured (preToolUse + sessionStart)"
+                        );
+                        println!(
+                            "[--] Cursor hooks.json: memory hooks missing (run: tok init -g --agent cursor)"
                         );
                     } else if has_rewrite {
                         println!("[ok] Cursor hooks.json: TOK preToolUse configured");
@@ -2358,20 +2715,34 @@ fn patch_gemini_settings(
         serde_json::json!({})
     };
 
+    let hook_dir = gemini_dir.join(HOOKS_SUBDIR);
+    install_memory_hook_scripts(&hook_dir, "gemini", verbose)?;
+    let memory_changed = patch_gemini_memory_hooks(&mut settings, &hook_dir)?;
+
     let before_tool_pointer = format!("/hooks/{}", BEFORE_TOOL_KEY);
-    if let Some(hooks) = settings.pointer(&before_tool_pointer) {
-        if let Some(arr) = hooks.as_array() {
-            if arr.iter().any(|h| {
+    let rewrite_present = settings.pointer(&before_tool_pointer).is_some_and(|hooks| {
+        hooks.as_array().is_some_and(|arr| {
+            arr.iter().any(|h| {
                 h.pointer("/hooks/0/command")
                     .and_then(|v| v.as_str())
                     .is_some_and(|c| c.contains("tok"))
-            }) {
-                if verbose > 0 {
-                    eprintln!("Gemini settings.json already has TOK hook");
-                }
-                return Ok(());
+            })
+        })
+    });
+    if rewrite_present {
+        if memory_changed {
+            let content = serde_json::to_string_pretty(&settings)?;
+            let tmp = NamedTempFile::new_in(gemini_dir)?;
+            fs::write(tmp.path(), &content)?;
+            tmp.persist(&settings_path)
+                .with_context(|| format!("Failed to write {}", settings_path.display()))?;
+            if verbose > 0 {
+                eprintln!("Patched {} (agent memory hooks)", settings_path.display());
             }
+        } else if verbose > 0 {
+            eprintln!("Gemini settings.json already has TOK hooks");
         }
+        return Ok(());
     }
 
     // Ask user before patching
@@ -2444,12 +2815,20 @@ fn uninstall_gemini(verbose: u8) -> Result<Vec<String>> {
         Err(_) => return Ok(removed),
     };
 
-    // Remove hook
-    let hook_path = gemini_dir.join(HOOKS_SUBDIR).join(GEMINI_HOOK_FILE);
-    if hook_path.exists() {
-        fs::remove_file(&hook_path)
-            .with_context(|| format!("Failed to remove {}", hook_path.display()))?;
-        removed.push(format!("Gemini hook: {}", hook_path.display()));
+    // Remove hooks
+    let hook_dir = gemini_dir.join(HOOKS_SUBDIR);
+    for name in [
+        GEMINI_HOOK_FILE,
+        MEMORY_SESSION_HOOK_FILE,
+        MEMORY_PROMPT_HOOK_FILE,
+        MEMORY_EXTRACT_HOOK_FILE,
+    ] {
+        let path = hook_dir.join(name);
+        if path.exists() {
+            fs::remove_file(&path)
+                .with_context(|| format!("Failed to remove {}", path.display()))?;
+            removed.push(format!("Gemini hook: {}", path.display()));
+        }
     }
 
     // Remove GEMINI.md
@@ -2465,6 +2844,7 @@ fn uninstall_gemini(verbose: u8) -> Result<Vec<String>> {
     if settings_path.exists() {
         let content = fs::read_to_string(&settings_path)?;
         if let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content) {
+            let mut changed = false;
             let bt_pointer = format!("/hooks/{}", BEFORE_TOOL_KEY);
             if let Some(arr) = settings
                 .pointer_mut(&bt_pointer)
@@ -2477,10 +2857,17 @@ fn uninstall_gemini(verbose: u8) -> Result<Vec<String>> {
                         .is_some_and(|c| c.contains("tok"))
                 });
                 if arr.len() < before {
-                    let new_content = serde_json::to_string_pretty(&settings)?;
-                    fs::write(&settings_path, new_content)?;
+                    changed = true;
                     removed.push("Gemini settings.json: removed TOK hook entry".to_string());
                 }
+            }
+            if remove_memory_hooks_from_gemini_json(&mut settings) {
+                changed = true;
+                removed.push("Gemini settings.json: removed TOK memory hooks".to_string());
+            }
+            if changed {
+                let new_content = serde_json::to_string_pretty(&settings)?;
+                fs::write(&settings_path, new_content)?;
             }
         }
     }
@@ -2502,6 +2889,30 @@ const COPILOT_HOOK_JSON: &str = r#"{
         "command": "tok hook copilot",
         "cwd": ".",
         "timeout": 5
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "./.github/hooks/tok-memory-session.sh",
+        "cwd": ".",
+        "timeout": 10
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "./.github/hooks/tok-memory-prompt.sh",
+        "cwd": ".",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "./.github/hooks/tok-memory-extract.sh",
+        "cwd": ".",
+        "timeout": 10
       }
     ]
   }
@@ -2637,6 +3048,8 @@ pub fn run_copilot(verbose: u8) -> Result<()> {
     let hooks_dir = github_dir.join("hooks");
 
     fs::create_dir_all(&hooks_dir).context("Failed to create .github/hooks/ directory")?;
+
+    install_memory_hook_scripts(&hooks_dir, "copilot", verbose)?;
 
     // 1. Write hook config
     let hook_path = hooks_dir.join("tok-rewrite.json");
@@ -3696,5 +4109,7 @@ More notes
     fn test_cursor_session_hook_outputs_additional_context() {
         assert!(CURSOR_SESSION_HOOK.contains("additional_context"));
         assert!(CURSOR_SESSION_HOOK.contains("tok gain"));
+        assert!(CURSOR_SESSION_HOOK.contains("memory-retrieve"));
+        assert!(CURSOR_SESSION_HOOK.contains("tok memory"));
     }
 }

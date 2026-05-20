@@ -1,5 +1,14 @@
 pub const REWRITE_HOOK_FILE: &str = "tok-rewrite.sh";
 pub const GEMINI_HOOK_FILE: &str = "tok-hook-gemini.sh";
+pub const MEMORY_SESSION_HOOK_FILE: &str = "tok-memory-session.sh";
+pub const MEMORY_PROMPT_HOOK_FILE: &str = "tok-memory-prompt.sh";
+pub const MEMORY_EXTRACT_HOOK_FILE: &str = "tok-memory-extract.sh";
+pub const MEMORY_CACHE_PROMPT_HOOK_FILE: &str = "tok-memory-cache-prompt.sh";
+pub const SESSION_START_KEY: &str = "SessionStart";
+pub const USER_PROMPT_SUBMIT_KEY: &str = "UserPromptSubmit";
+pub const STOP_KEY: &str = "Stop";
+pub const BEFORE_AGENT_KEY: &str = "BeforeAgent";
+pub const AFTER_AGENT_KEY: &str = "AfterAgent";
 
 /// Home-relative path to the OpenCode config directory (`~/.config/opencode`).
 #[allow(dead_code)] // Documents layout with `OPENCODE_PLUGIN_PATH`; hook paths use the plugin constant.

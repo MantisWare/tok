@@ -1,3 +1,4 @@
+mod agent_memory;
 mod analytics;
 mod cli_dispatch;
 mod cmds;
@@ -718,6 +719,12 @@ pub(crate) enum Commands {
         command: MemCommands,
     },
 
+    /// Agent memory — rules, preferences, and durable context for LLM sessions
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommands,
+    },
+
     /// Code-indexing and annotation engine — headers, manifests, wiki
     Forgemap {
         #[command(subcommand)]
@@ -761,6 +768,41 @@ pub(crate) enum HookCommands {
     Gemini,
     /// Copilot preToolUse — same deal, different vendor
     Copilot,
+    /// Build memory context pack for sessionStart (JSON on stdout)
+    #[command(name = "memory-retrieve")]
+    MemoryRetrieve {
+        /// User message / query for retrieval
+        #[arg(long)]
+        query: Option<String>,
+        /// Emit JSON `{"additional_context": "..."}`
+        #[arg(long)]
+        json: bool,
+        /// Agent vendor: claude, cursor, gemini, copilot, plain, auto
+        #[arg(long, default_value = "auto")]
+        agent: String,
+        /// Hook event: session_start, user_prompt, stop
+        #[arg(long, default_value = "session_start")]
+        event: String,
+        /// Read hook context JSON from stdin (session_id, cwd, prompt, …)
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Cache user prompt for turn pairing (Cursor beforeSubmitPrompt)
+    #[command(name = "memory-cache-prompt")]
+    MemoryCachePrompt {
+        #[arg(long, default_value = "auto")]
+        agent: String,
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Enqueue memory extraction from a completed turn (JSON on stdin)
+    #[command(name = "memory-extract")]
+    MemoryExtract {
+        #[arg(long, default_value = "auto")]
+        agent: String,
+        #[arg(long)]
+        stdin: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -986,6 +1028,103 @@ pub(crate) enum MemCommands {
         /// Minimum complexity to report
         #[arg(long, default_value = "5")]
         min_complexity: u32,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum MemoryCommands {
+    /// Database path, counts, and enabled flags
+    Status,
+    /// Enable agent memory in config
+    On,
+    /// Disable agent memory in config
+    Off,
+    /// Enable or disable automatic extraction after turns
+    Extraction {
+        /// true to enable, false to disable
+        enabled: bool,
+    },
+    /// Store a memory manually
+    Add {
+        /// Memory text
+        content: String,
+        /// Memory type (rule, preference, project_fact, …)
+        #[arg(long, default_value = "preference")]
+        memory_type: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        tags: Vec<String>,
+    },
+    /// Full-text search scoped memories
+    Search {
+        query: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// List memories
+    List {
+        #[arg(long)]
+        memory_type: Option<String>,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+    },
+    /// Show one memory by id
+    Show { id: String },
+    /// Permanently delete a memory
+    Forget { id: String },
+    /// Mark memory archived
+    Archive { id: String },
+    /// Mark memory rejected
+    Reject { id: String },
+    /// Preview what would be injected for a query
+    #[command(name = "inspect-context")]
+    InspectContext {
+        query: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Emit context pack (for hooks)
+    #[command(name = "context-pack")]
+    ContextPack {
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Clear memories for --session or --project
+    Clear {
+        #[arg(long)]
+        session: bool,
+        #[arg(long)]
+        project: bool,
+    },
+    /// Export memories (json or markdown)
+    Export {
+        #[arg(long, default_value = "json")]
+        format: String,
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+    /// Import memories from JSON export
+    Import { path: String },
+    /// Show recent audit events
+    Events {
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+    /// List inferred memories pending review
+    Review {
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
     },
 }
 
@@ -1913,7 +2052,10 @@ fn print_welcome_screen() {
     // ── Usage — Analytics ─────────────────────────────────────────────
     print_guide_header("Usage \u{2014} Analytics");
     print_guide_row("tok gain", "Token savings stats");
-    print_guide_row("tok gain --top 25", "Leaderboard size (default 10, max 100)");
+    print_guide_row(
+        "tok gain --top 25",
+        "Leaderboard size (default 10, max 100)",
+    );
     print_guide_row("tok gain --rollup", "Aggregate by tool (cargo, grep, …)");
     print_guide_row("tok gain --graph", "ASCII graph of daily savings");
     print_guide_row("tok gain --history", "Full command history");
@@ -1946,6 +2088,22 @@ fn print_welcome_screen() {
     print_guide_row("tok mem context <symbol>", "Callers, callees, type refs");
     print_guide_row("tok mem impact <symbol>", "Blast radius analysis");
     print_guide_row("tok mem dead-code", "Find zero-reference symbols");
+    print_guide_row(
+        "tok memory status",
+        "Agent memory DB, counts, enabled flags",
+    );
+    print_guide_row("tok memory on / off", "Enable or disable agent memory");
+    print_guide_row("tok memory add <text>", "Store rule, preference, or fact");
+    print_guide_row("tok memory search <q>", "Scoped BM25 search");
+    print_guide_row("tok memory list", "List memories (--type, --project)");
+    print_guide_row(
+        "tok memory inspect-context <q>",
+        "Preview injected context pack",
+    );
+    print_guide_row(
+        "tok hook memory-retrieve --json",
+        "sessionStart context (hooks)",
+    );
     print_guide_row("tok forgemap init", "Inject ForgeMap source headers");
     print_guide_row("tok forgemap manifest", "Generate .forgemap manifest");
     print_guide_row("tok forgemap check", "Coverage report for headers");
@@ -2226,6 +2384,68 @@ const MANUAL: &[ManSection] = &[
             (
                 "tok mem forget <repo>",
                 "Remove indexed repo from memory DB",
+            ),
+        ],
+    },
+    ManSection {
+        heading: "Agent Memory — tok memory",
+        entries: &[
+            (
+                "tok memory status",
+                "DB path, counts, enabled/extraction flags",
+            ),
+            ("tok memory on", "Enable agent memory in config"),
+            ("tok memory off", "Disable agent memory and hook I/O"),
+            (
+                "tok memory extraction <true|false>",
+                "Toggle auto-extraction after turns",
+            ),
+            (
+                "tok memory add <text>",
+                "Store memory (--type, --project, --session, --tags)",
+            ),
+            (
+                "tok memory search <query>",
+                "Scoped BM25 + hybrid search (--verbose for scores)",
+            ),
+            (
+                "tok memory list",
+                "List memories (--type, --project, --status, --limit)",
+            ),
+            ("tok memory show <id>", "Show one memory record"),
+            ("tok memory forget <id>", "Permanently delete a memory"),
+            ("tok memory archive <id>", "Mark memory archived"),
+            ("tok memory reject <id>", "Mark memory rejected"),
+            (
+                "tok memory inspect-context <q>",
+                "Preview what hooks would inject",
+            ),
+            (
+                "tok memory context-pack",
+                "Emit context block (--json for hooks)",
+            ),
+            (
+                "tok memory clear --session",
+                "Clear memories for current session",
+            ),
+            (
+                "tok memory clear --project",
+                "Clear memories for current project",
+            ),
+            (
+                "tok memory export --format json",
+                "Export vault (json or markdown, -o file)",
+            ),
+            ("tok memory import <file>", "Import from JSON export"),
+            ("tok memory events", "Recent audit log entries"),
+            ("tok memory review", "List inferred memories to review"),
+            (
+                "tok hook memory-retrieve --json",
+                "Hook: build sessionStart context pack",
+            ),
+            (
+                "tok hook memory-extract",
+                "Hook: enqueue extraction (JSON on stdin)",
             ),
         ],
     },

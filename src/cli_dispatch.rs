@@ -738,6 +738,30 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
             match command {
                 HookCommands::Gemini => crate::hooks::hook_cmd::run_gemini()?,
                 HookCommands::Copilot => crate::hooks::hook_cmd::run_copilot()?,
+                HookCommands::MemoryRetrieve {
+                    query,
+                    json,
+                    agent,
+                    event,
+                    stdin,
+                } => {
+                    crate::hooks::memory_hook::run_memory_retrieve(
+                        query.as_deref(),
+                        json,
+                        Some(agent.as_str()),
+                        Some(event.as_str()),
+                        stdin,
+                    )?;
+                }
+                HookCommands::MemoryCachePrompt { agent, stdin } => {
+                    crate::hooks::memory_hook::run_memory_cache_prompt(
+                        Some(agent.as_str()),
+                        stdin,
+                    )?;
+                }
+                HookCommands::MemoryExtract { agent, stdin } => {
+                    crate::hooks::memory_hook::run_memory_extract(Some(agent.as_str()), stdin)?;
+                }
             }
             0
         }
@@ -980,6 +1004,8 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
         }
 
         Commands::Mem { command } => crate::cmds::mem::dispatch_mem(command)?,
+
+        Commands::Memory { command } => crate::agent_memory::cli::dispatch(command)?,
 
         Commands::Forgemap { command } => {
             crate::cmds::forgemap::dispatch_forgemap(command, cli.verbose)?

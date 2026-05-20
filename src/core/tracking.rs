@@ -306,18 +306,15 @@ struct RollupAcc {
 }
 
 /// Apply optional rollup and limit to raw per-`tok_cmd` aggregates.
-fn finalize_by_command(
-    rows: Vec<CommandStats>,
-    limit: usize,
-    rollup: bool,
-) -> Vec<CommandStats> {
+fn finalize_by_command(rows: Vec<CommandStats>, limit: usize, rollup: bool) -> Vec<CommandStats> {
     let limit = clamp_gain_top(limit);
     if rows.is_empty() {
         return rows;
     }
 
     let mut out: Vec<CommandStats> = if rollup {
-        let mut map: std::collections::BTreeMap<String, RollupAcc> = std::collections::BTreeMap::new();
+        let mut map: std::collections::BTreeMap<String, RollupAcc> =
+            std::collections::BTreeMap::new();
         for (cmd, count, saved, pct, avg_time) in rows {
             let key = rollup_command_key(&cmd);
             let acc = map.entry(key).or_insert(RollupAcc {
@@ -699,8 +696,11 @@ impl Tracker {
         };
 
         let raw_by_command = self.get_by_command_raw(project_path)?;
-        let by_command =
-            finalize_by_command(raw_by_command, by_command_opts.limit, by_command_opts.rollup);
+        let by_command = finalize_by_command(
+            raw_by_command,
+            by_command_opts.limit,
+            by_command_opts.rollup,
+        );
         let by_day = self.get_by_day(project_path)?;
         let by_client = self.get_by_client(project_path)?;
 
@@ -1708,10 +1708,7 @@ mod tests {
         assert_eq!(rollup_command_key("tok cargo test"), "cargo");
         assert_eq!(rollup_command_key("tok grep"), "grep");
         assert_eq!(rollup_command_key("tok:toml jq ."), "toml:jq");
-        assert_eq!(
-            rollup_command_key("tok fallback: make"),
-            "fallback"
-        );
+        assert_eq!(rollup_command_key("tok fallback: make"), "fallback");
     }
 
     #[test]

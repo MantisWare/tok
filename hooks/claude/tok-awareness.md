@@ -107,6 +107,27 @@ tok mem impact <symbol>    # Blast radius — who breaks if this changes?
 tok mem dead-code          # Symbols with zero inbound references
 tok mem changes            # What changed since last session
 tok mem detect             # Symbols affected by changed files
+```
+
+## Agent Memory (`tok memory` — not `tok mem`)
+
+Stores rules, preferences, and project facts for LLM sessions. **Enabled by default** after `tok init -g`. Hooks inject context at session start; durable facts are extracted after turns.
+
+```bash
+tok memory status
+tok memory add "Always use tok for shell commands" --type rule
+tok memory search "deployment rules"
+tok memory list --type preference
+tok memory inspect-context "implement feature X"
+tok memory on / off
+tok memory extraction false    # disable auto-add, keep inject
+tok hook memory-retrieve --json
+tok hook memory-extract        # stdin: {"user":"...","assistant":"..."}
+```
+
+## ForgeMap
+
+```bash
 tok forgemap init          # Annotate source files with ForgeMap headers
 tok forgemap check         # Coverage report for annotations
 tok forgemap manifest      # Generate .forgemap project manifest

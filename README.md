@@ -796,6 +796,47 @@ Optional **`mem-ast`** feature flag in Cargo for richer parsing on supported lan
 
 `tok man mem` · implementation notes in **[docs/contributing/ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)**
 
+## tok memory — Agent Memory (rules & preferences)
+
+**`tok mem`** indexes *code symbols*. **`tok memory`** remembers *what you told the agent* — rules, preferences, project facts — scoped by user, project, and session.
+
+- **Enabled by default** after `tok init -g`
+- **Hooks** call `tok hook memory-retrieve` at session start (inject) and `tok hook memory-extract` after turns (learn)
+- **Local-only** SQLite at `~/.local/share/tok/memory/tok-memory.db` (separate from structural `memory.db`)
+- Design reference: [docs/TOK_Memory_Gateway_Mem0_Inspired_Architecture.md](docs/TOK_Memory_Gateway_Mem0_Inspired_Architecture.md)
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `tok memory status` | DB path, counts, enabled/extraction flags |
+| `tok memory on` / `off` | Enable or disable agent memory |
+| `tok memory extraction <true\|false>` | Toggle auto-extraction after turns |
+| `tok memory add "<text>"` | Store memory (`--type`, `--project`, `--session`, `--tags`) |
+| `tok memory search "<query>"` | Scoped search (`--verbose` for score breakdown) |
+| `tok memory list` | List memories (`--type`, `--project`, `--status`) |
+| `tok memory show <id>` | Show one record |
+| `tok memory forget <id>` | Delete permanently |
+| `tok memory archive <id>` | Archive |
+| `tok memory reject <id>` | Mark rejected (not injected) |
+| `tok memory inspect-context "<q>"` | Preview what hooks would inject |
+| `tok memory context-pack` | Emit context block (`--json` for hooks) |
+| `tok memory clear --session` | Clear session-scoped memories |
+| `tok memory clear --project` | Clear project-scoped memories |
+| `tok memory export` | Export vault (`--format json\|markdown`, `-o` file) |
+| `tok memory import <file>` | Import from JSON export |
+| `tok memory events` | Audit log tail |
+| `tok memory review` | Inferred memories pending review |
+
+### Hook integration
+
+```bash
+tok hook memory-retrieve --json          # sessionStart → additional_context
+tok hook memory-extract                  # stdin: {"user":"...","assistant":"..."}
+```
+
+Help: `tok man memory` · `tok memory --help`
+
 ## ForgeMap — Code Indexing and Annotation
 
 ForgeMap is TOK’s other brain for *orientation*: machine-readable comment headers in source files, reverse dependency graphs, and project manifests. It implements the [CodeDNA](https://github.com/Larens94/codedna) protocol — breadcrumbs for agents, not wallpaper for humans.

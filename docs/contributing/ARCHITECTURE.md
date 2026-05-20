@@ -20,7 +20,8 @@
 10. [Common Patterns](#common-patterns)
 11. [Build Optimizations](#build-optimizations)
 12. [Extensibility Guide](#extensibility-guide)
-13. [Architecture Decision Records](#architecture-decision-records)
+13. [Agent Memory Gateway](#agent-memory-gateway)
+14. [Architecture Decision Records](#architecture-decision-records)
 
 ---
 
@@ -187,6 +188,8 @@ Savings by ecosystem:
 - **Hook system**: `src/hooks/` — `init/` (install templates and paths), `rewrite_cmd`, `hook_cmd`, `hook_check`, `hook_audit`, trust, integrity, etc.
 - **Discover / rewrite**: `src/discover/` — lexer, registry, rules, providers, reports.
 - **Analytics**: `src/analytics/` — `gain`, `cc_economics`, session reporting, etc.
+- **Structural code memory**: `src/mem/` — symbol index, FTS, graph queries (`tok mem`; DB: `memory.db`).
+- **Agent memory**: `src/agent_memory/` — rules, preferences, project facts (`tok memory`; DB: `tok-memory.db`). Hooks via `tok hook memory-retrieve` / `memory-extract`.
 
 ### Representative command coverage
 
@@ -987,6 +990,29 @@ Overhead Sources:
   • Filtering/compression: ~2-8ms (varies by strategy)
   • SQLite tracking: ~1-3ms
 ```
+
+---
+
+## Agent Memory Gateway
+
+TOK implements a **local-first agent memory layer** (`tok memory`) inspired by Mem0 patterns but **without** a Mem0 runtime dependency. It is intentionally separate from **`tok mem`** (structural code intelligence over symbols).
+
+| | `tok mem` | `tok memory` |
+|---|-----------|----------------|
+| **Stores** | Functions, types, call graph | Rules, preferences, project facts |
+| **Database** | `memory.db` | `tok-memory.db` under `~/.local/share/tok/memory/` |
+| **Module** | `src/mem/` | `src/agent_memory/` |
+| **Typical use** | “Who calls `dispatch`?” | “User prefers Cursor-ready specs” |
+
+**Flow:**
+
+1. `sessionStart` (Cursor, etc.) → `tok hook memory-retrieve --json` → scoped search + context pack → `additional_context`
+2. User/agent turn → optional `tok hook memory-extract` → heuristic/SLM extraction queue → `add` with dedup + secret checks
+3. Humans debug via `tok memory inspect-context`, `list`, `export`
+
+**Config** (`config.toml`): `[memory]` with `enabled` (default `true` after `tok init -g`), `[memory.context]` token budget, `[memory.extraction]`, `[memory.privacy]`.
+
+**Help:** `tok man memory` · full design spec: [TOK_Memory_Gateway_Mem0_Inspired_Architecture.md](../TOK_Memory_Gateway_Mem0_Inspired_Architecture.md)
 
 ---
 

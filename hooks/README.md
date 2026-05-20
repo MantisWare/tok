@@ -29,6 +29,8 @@ Agent runs command (e.g., "cargo test --nocapture")
 
 All rewrite logic lives in the Rust binary (`src/discover/registry.rs`). Hook scripts are **thin delegates** that handle agent-specific JSON formats and call `tok rewrite` for the actual decision. This ensures a single source of truth for all 70+ rewrite patterns.
 
+**Agent memory** (`tok memory`, `src/agent_memory/`): separate from structural `tok mem`. After `tok init -g`, memory is enabled by default. `sessionStart` hooks call `tok hook memory-retrieve --json` to inject rules/preferences into context; post-turn hooks can call `tok hook memory-extract` with user/assistant JSON on stdin. See [docs/TOK_Memory_Gateway_Mem0_Inspired_Architecture.md](../docs/TOK_Memory_Gateway_Mem0_Inspired_Architecture.md).
+
 ## Directory Structure
 
 Each agent subdirectory has its own README with hook-specific details:
@@ -48,7 +50,7 @@ Each agent subdirectory has its own README with hook-specific details:
 | Claude Code | Shell hook (`PreToolUse`) | Transparent rewrite | Yes (`updatedInput`) |
 | VS Code Copilot Chat | Rust binary (`tok hook copilot`) | Transparent rewrite | Yes (`updatedInput`) |
 | GitHub Copilot CLI | Rust binary (`tok hook copilot`) | Deny-with-suggestion | No (agent retries) |
-| Cursor | Shell hook (`preToolUse`) | Transparent rewrite | Yes (`updated_input`) |
+| Cursor | Shell hooks (`preToolUse` + `sessionStart`) | Rewrite + agent memory inject | Yes (`updated_input` / `additional_context`) |
 | Gemini CLI | Rust binary (`tok hook gemini`) | Transparent rewrite | Yes (`hookSpecificOutput`) |
 | Cline / Roo Code | Custom instructions (rules file) | Prompt-level guidance | N/A |
 | Windsurf | Custom instructions (rules file) | Prompt-level guidance | N/A |

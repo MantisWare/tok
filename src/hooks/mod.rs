@@ -6,6 +6,8 @@ pub mod hook_check;
 pub mod hook_cmd;
 pub mod init;
 pub mod integrity;
+pub mod memory_hook;
+mod memory_payload;
 pub mod permissions;
 pub mod rewrite_cmd;
 pub mod trust;

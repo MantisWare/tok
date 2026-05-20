@@ -25,6 +25,8 @@ pub struct Config {
     pub security: crate::security::config::SecurityConfig,
     #[serde(default)]
     pub slm: crate::security::config::SlmConfig,
+    #[serde(default)]
+    pub memory: crate::agent_memory::AgentMemoryConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -212,6 +214,13 @@ exclude_commands = ["curl", "gh"]
     fn test_hooks_config_default_empty() {
         let config = Config::default();
         assert!(config.hooks.exclude_commands.is_empty());
+    }
+
+    #[test]
+    fn test_memory_config_defaults_enabled() {
+        let config = Config::default();
+        assert!(config.memory.enabled);
+        assert!(config.memory.extraction.enabled);
     }
 
     #[test]
