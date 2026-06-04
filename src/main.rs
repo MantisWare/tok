@@ -754,6 +754,13 @@ pub(crate) enum Commands {
         slm: bool,
     },
 
+    /// Update tok to the latest release
+    Update {
+        /// Check for updates only, do not install
+        #[arg(long)]
+        check: bool,
+    },
+
     /// Full command manual — every tok command with descriptions
     Man {
         /// Filter manual to a specific section (e.g. "git", "mem", "security")
@@ -1649,6 +1656,7 @@ const TOK_META_COMMANDS: &[&str] = &[
     "session",
     "rewrite",
     "man",
+    "update",
 ];
 
 fn run_fallback(parse_error: clap::Error) -> Result<i32> {
@@ -1800,6 +1808,22 @@ pub(crate) enum GtCommands {
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn print_update_notice(refresh_if_stale: bool) {
+    use core::update::{check_cached, UpdateStatus};
+
+    let Ok(UpdateStatus::Outdated { latest, .. }) = check_cached(refresh_if_stale) else {
+        return;
+    };
+
+    println!(
+        "  {} v{} — run {}",
+        "Update available:".bright_yellow(),
+        latest.bright_white().bold(),
+        "tok update".bright_yellow().bold()
+    );
+    println!();
+}
+
 fn print_version_banner() {
     print_welcome_screen();
 }
@@ -1807,6 +1831,7 @@ fn print_version_banner() {
 fn print_welcome_screen() {
     if !std::io::stdout().is_terminal() {
         println!("tok {VERSION}");
+        print_update_notice(true);
         return;
     }
 
@@ -1834,7 +1859,7 @@ fn print_welcome_screen() {
         "  {}",
         "Squeeze noisy CLI output before it hits your LLM".bright_black()
     );
-    println!();
+    print_update_notice(true);
     println!(
         "  {} {}",
         "Author:".bright_black(),
@@ -2117,6 +2142,7 @@ fn print_welcome_screen() {
     print_guide_row("tok trust", "Trust local .tok filter recipes");
     print_guide_row("tok untrust", "Remove trusted filter recipes");
     print_guide_row("tok verify", "Sanity-check hooks and filters");
+    print_guide_row("tok update", "Update tok to the latest release");
     print_guide_row("tok man", "Full command manual (every command)");
     print_guide_row("tok man <topic>", "Filter manual (e.g. tok man git)");
     print_guide_row("tok --help", "All commands and flags");
@@ -2545,6 +2571,8 @@ const MANUAL: &[ManSection] = &[
             ("tok init --all", "Install hooks for ALL agents at once"),
             ("tok config", "View or scaffold tok config"),
             ("tok verify", "Sanity-check hooks + run TOML filter tests"),
+            ("tok update", "Update tok to the latest GitHub release"),
+            ("tok update --check", "Check for updates without installing"),
             ("tok trust", "Trust this project's .tok filter recipes"),
             ("tok untrust", "Remove trusted local TOML filters"),
             (
@@ -2632,6 +2660,7 @@ pub(crate) fn print_manual(filter: &[String]) {
     if !query.is_empty() {
         println!("  {} {:?}", "Filtered to:".bright_black(), query);
     }
+    print_update_notice(false);
     println!();
 
     let cmd_col: usize = 32;
@@ -2689,8 +2718,9 @@ fn run_cli() -> Result<i32> {
 
     // Warn if installed hook is outdated/missing (1/day, non-blocking).
     // Skip for Gain — it shows its own inline hook warning.
-    if !matches!(cli.command, Commands::Gain { .. }) {
+    if !matches!(cli.command, Commands::Gain { .. } | Commands::Update { .. }) {
         hooks::hook_check::maybe_warn();
+        core::update::maybe_warn();
     }
 
     // Runtime integrity check for operational commands.

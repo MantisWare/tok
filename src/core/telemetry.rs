@@ -59,7 +59,7 @@ fn send_ping() -> Result<(), Box<dyn std::error::Error>> {
     let version = env!("CARGO_PKG_VERSION").to_string();
     let os = std::env::consts::OS.to_string();
     let arch = std::env::consts::ARCH.to_string();
-    let install_method = detect_install_method();
+    let install_method = crate::core::update::detect_install_method();
 
     // Get stats from tracking DB
     let (commands_24h, top_commands, savings_pct, tokens_saved_24h, tokens_saved_total) =
@@ -187,32 +187,6 @@ fn get_stats() -> (i64, Vec<String>, Option<f64>, i64, i64) {
     )
 }
 
-fn detect_install_method() -> &'static str {
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(_) => return "unknown",
-    };
-    let real_path = std::fs::canonicalize(&exe)
-        .unwrap_or(exe)
-        .to_string_lossy()
-        .to_string();
-    install_method_from_path(&real_path)
-}
-
-fn install_method_from_path(path: &str) -> &'static str {
-    if path.contains("/Cellar/tok/") || path.contains("/homebrew/") {
-        "homebrew"
-    } else if path.contains("/.cargo/bin/") || path.contains("\\.cargo\\bin\\") {
-        "cargo"
-    } else if path.contains("/.local/bin/") || path.contains("\\.local\\bin\\") {
-        "script"
-    } else if path.contains("/nix/store/") {
-        "nix"
-    } else {
-        "other"
-    }
-}
-
 fn telemetry_marker_path() -> PathBuf {
     let data_dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -228,6 +202,7 @@ fn touch_marker(path: &PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::update::install_method_from_path;
 
     #[test]
     fn test_device_hash_is_stable() {
@@ -317,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_detect_install_method_returns_known_value() {
-        let method = detect_install_method();
+        let method = crate::core::update::detect_install_method();
         assert!(
             ["homebrew", "cargo", "script", "nix", "other", "unknown"].contains(&method),
             "Unexpected install method: {}",

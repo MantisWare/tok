@@ -1068,6 +1068,12 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
             }
             0
         }
+
+        Commands::Update { check } => {
+            crate::core::update::run(check)?;
+            0
+        }
+
         Commands::Man { filter } => {
             crate::print_manual(&filter);
             0

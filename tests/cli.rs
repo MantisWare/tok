@@ -145,6 +145,8 @@ mod test_test_runner;
 mod test_tree;
 #[path = "cli/test_trust.rs"]
 mod test_trust;
+#[path = "cli/test_update.rs"]
+mod test_update;
 #[path = "cli/test_verify.rs"]
 mod test_verify;
 #[path = "cli/test_version_help.rs"]
