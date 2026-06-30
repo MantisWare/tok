@@ -1059,14 +1059,14 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
             0
         }
 
-        Commands::Doctor { slm } => {
+        Commands::Doctor { repair, slm } => {
             if slm {
                 let config = crate::core::config::Config::load().unwrap_or_default();
                 crate::security::slm::doctor::run(&config.slm)?;
+                0
             } else {
-                println!("tok doctor: use --slm to check SLM runtime health");
+                crate::hooks::doctor_cmd::run(repair, cli.verbose)?
             }
-            0
         }
 
         Commands::Update { check } => {

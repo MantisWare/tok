@@ -244,7 +244,8 @@ tok kubectl pods / services / logs <pod> [-n ns]
 tok security-inspect file.txt            # Dry-run scan
 tok security-inspect file.txt --report   # Entity types + confidence
 echo "text" | tok security-inspect -
-tok doctor                      # General health
+tok doctor                      # Health check (hook integrity, filter self-tests, config)
+tok doctor --repair             # Auto-repair fixable issues (reinstall hook + re-baseline)
 tok doctor --slm                # Local SLM binary + model check
 
 # Global flags (any subcommand)

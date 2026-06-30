@@ -56,12 +56,13 @@ fn doctor_slm_runs_without_crash() {
 }
 
 #[test]
-fn doctor_without_slm_flag_shows_help() {
+fn doctor_runs_health_checks() {
+    // Read-only diagnostics; never pass --repair here (it would mutate ~/.claude).
     tok_cmd()
         .args(["doctor"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("--slm"));
+        .stdout(predicate::str::contains("TOK Doctor"))
+        .stdout(predicate::str::contains("filter self-tests"));
 }
 
 #[test]

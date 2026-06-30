@@ -747,8 +747,11 @@ pub(crate) enum Commands {
         report: bool,
     },
 
-    /// Check SLM runtime health and configuration
+    /// Diagnose (and optionally repair) the TOK installation
     Doctor {
+        /// Attempt safe automated repairs (reinstall hook, re-baseline integrity)
+        #[arg(long)]
+        repair: bool,
         /// Check SLM runtime specifically
         #[arg(long)]
         slm: bool,
@@ -1657,6 +1660,7 @@ const TOK_META_COMMANDS: &[&str] = &[
     "rewrite",
     "man",
     "update",
+    "doctor",
 ];
 
 fn run_fallback(parse_error: clap::Error) -> Result<i32> {
@@ -2532,6 +2536,14 @@ const MANUAL: &[ManSection] = &[
             (
                 "tok security-inspect <f>",
                 "Inspect text/file for sensitive data (dry-run)",
+            ),
+            (
+                "tok doctor",
+                "Health check: hook integrity, filter self-tests, config",
+            ),
+            (
+                "tok doctor --repair",
+                "Auto-repair fixable issues (reinstall hook + re-baseline)",
             ),
             (
                 "tok doctor --slm",
