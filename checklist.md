@@ -1,14 +1,20 @@
 # TOK gain — client reporting checklist
 
+> **Confidence:** 94%
+
 ## Phase 1 (implemented)
 
 - [x] `client` column on `commands` in `history.db`
 - [x] Record client from `TOK_CLIENT` env on each `tok` invocation
 - [x] Hooks prefix rewritten commands (`TOK_CLIENT=<id> tok …`) and export `TOK_CLIENT` before `tok rewrite`
   - Claude Code (`claude`), Cursor (`cursor`), Copilot (`copilot`), Gemini (`gemini`), OpenCode (`opencode`)
+- [x] `tok rewrite` applies client prefix via `apply_hook_client_prefix` (`src/hooks/rewrite_cmd.rs`)
+- [x] `tok hook copilot` / `tok hook gemini` tag rewrites in Rust (`prefix_command_with_client`)
+- [x] `src/core/client.rs` — normalize ids, prefix helpers, legacy empty → `unknown` display
 - [x] `tok gain` shows **By Client** in the default summary
 - [x] `tok gain --by-client` — client breakdown only
 - [x] JSON export includes `by_client` array
+- [x] Tests: `test_tracker_client_attribution` (unit), `gain_by_client` CLI smoke (`tests/cli/test_gain.rs`)
 
 ### Client ids
 

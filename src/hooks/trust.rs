@@ -197,7 +197,11 @@ pub fn run_trust(list: bool) -> Result<()> {
 
     let filter_path = Path::new(".tok/filters.toml");
     if !filter_path.exists() {
-        anyhow::bail!("No .tok/filters.toml found in current directory");
+        anyhow::bail!(
+            "No .tok/filters.toml found in current directory.\n\
+             Run `tok init` to generate a project filter template, then `tok trust` to review and enable it.\n\
+             Use `tok trust --list` to see projects you have already trusted."
+        );
     }
 
     // Read ONCE to prevent TOCTOU: display + hash from same buffer

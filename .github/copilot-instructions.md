@@ -66,25 +66,6 @@ tok mem context <symbol>   # Callers, callees, type refs
 tok mem impact <symbol>    # Blast radius analysis
 tok mem dead-code          # Zero-reference symbols
 tok mem changes            # What changed since last session
-```
-
-## Agent Memory (`tok memory`)
-
-Rules, preferences, and project facts (not code symbols — that's `tok mem`). Enabled by default after `tok init -g`.
-
-```bash
-tok memory status
-tok memory add "<text>" --type rule
-tok memory search "<query>"
-tok memory inspect-context "<query>"
-tok memory list
-tok memory off
-tok hook memory-retrieve --json
-```
-
-## ForgeMap
-
-```bash
 tok forgemap init          # Annotate source files with headers
 tok forgemap check         # Coverage report
 tok forgemap manifest      # Generate project manifest

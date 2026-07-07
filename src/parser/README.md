@@ -124,12 +124,14 @@ Run `cargo test parser::tests`. Each parser should have tier validation tests: a
 ## Roadmap
 
 ### Phase 4: Module Migration
-- [ ] vitest_cmd.rs → VitestParser
-- [ ] playwright_cmd.rs → PlaywrightParser
-- [ ] pnpm_cmd.rs → PnpmParser (list, outdated)
+- [x] vitest_cmd.rs → VitestParser
+- [x] playwright_cmd.rs → PlaywrightParser
+- [x] pnpm_cmd.rs → PnpmParser (list, outdated)
 - [ ] lint_cmd.rs → EslintParser
 - [ ] tsc_cmd.rs → TscParser
 - [ ] gh_cmd.rs → GhParser
+
+> **Auto-updated by Cursor:** Checked off vitest, playwright, and pnpm parser migrations on 2026-07-07 (verified `OutputParser` impls in `src/cmds/js/*_cmd.rs`).
 
 ### Phase 5: Observability
 - [ ] Extend tracking.db: `parse_tier`, `format_mode`

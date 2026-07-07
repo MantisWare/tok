@@ -1052,6 +1052,7 @@ pub(crate) enum MemoryCommands {
     /// Enable or disable automatic extraction after turns
     Extraction {
         /// true to enable, false to disable
+        #[arg(action = clap::ArgAction::Set)]
         enabled: bool,
     },
     /// Store a memory manually
@@ -1661,7 +1662,85 @@ const TOK_META_COMMANDS: &[&str] = &[
     "man",
     "update",
     "doctor",
+    // TOK-only commands with no real binary to passthrough to. Without these,
+    // a typo'd flag or subcommand (e.g. `tok mem serch`) falls through to raw
+    // execution and dies with a cryptic "command not found" instead of showing
+    // Clap's usage/subcommand error. These have no `trailing_var_arg`, so they
+    // can actually fail to parse.
+    "read",
+    "smart",
+    "json",
+    "deps",
+    "mem",
+    "memory",
+    "forgemap",
+    "hook",
+    "security-inspect",
 ];
+
+/// Levenshtein edit distance between two strings (used for typo suggestions).
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr: Vec<usize> = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
+/// Suggest the closest known TOK subcommand for a mistyped command.
+/// Returns `None` unless the input is a near-miss (edit distance ≤ 2) so
+/// legitimate passthrough commands (make, python, …) never get flagged.
+fn suggest_command(input: &str) -> Option<String> {
+    use clap::CommandFactory;
+
+    if input.len() < 3 {
+        return None;
+    }
+
+    let input_lc = input.to_lowercase();
+    let cmd = Cli::command();
+    let mut best: Option<(usize, String)> = None;
+    for sc in cmd.get_subcommands() {
+        for name in std::iter::once(sc.get_name()).chain(sc.get_all_aliases()) {
+            let distance = levenshtein(&input_lc, name);
+            let better = match &best {
+                Some((best_distance, _)) => distance < *best_distance,
+                None => true,
+            };
+            if better {
+                best = Some((distance, name.to_string()));
+            }
+        }
+    }
+
+    match best {
+        Some((distance, name)) if distance > 0 && distance <= 2 => Some(name),
+        _ => None,
+    }
+}
+
+/// Print a friendly error when a fallback command can't be executed.
+/// Names the offending command and, for "not found" typos, suggests the
+/// closest TOK subcommand.
+fn report_exec_failure(cmd: &str, e: &std::io::Error) {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        eprint!("[tok: command '{}' not found]", cmd);
+        if let Some(suggestion) = suggest_command(cmd) {
+            eprint!(" Did you mean `tok {}`?", suggestion);
+        }
+        eprintln!();
+    } else {
+        eprintln!("[tok: {}: {}]", cmd, e);
+    }
+}
 
 fn run_fallback(parse_error: clap::Error) -> Result<i32> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -1742,7 +1821,7 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
             Err(e) => {
                 // Command not found — same behaviour as no-TOML path
                 core::tracking::record_parse_failure_silent(&raw_command, &error_message, false);
-                eprintln!("[tok: {}]", e);
+                report_exec_failure(&args[0], &e);
                 Ok(127)
             }
         }
@@ -1766,7 +1845,7 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
             Err(e) => {
                 core::tracking::record_parse_failure_silent(&raw_command, &error_message, false);
                 // Command not found or other OS error — single message, no duplicate Clap error
-                eprintln!("[tok: {}]", e);
+                report_exec_failure(&args[0], &e);
                 Ok(127)
             }
         }
@@ -2973,6 +3052,36 @@ mod tests {
     }
 
     #[test]
+    fn test_levenshtein_basic() {
+        assert_eq!(levenshtein("verify", "verify"), 0);
+        assert_eq!(levenshtein("verigy", "verify"), 1);
+        assert_eq!(levenshtein("cargp", "cargo"), 1);
+        assert_eq!(levenshtein("", "abc"), 3);
+    }
+
+    #[test]
+    fn test_suggest_command_catches_typos() {
+        assert_eq!(suggest_command("verigy").as_deref(), Some("verify"));
+        assert_eq!(suggest_command("cargp").as_deref(), Some("cargo"));
+        assert_eq!(suggest_command("trast").as_deref(), Some("trust"));
+    }
+
+    #[test]
+    fn test_suggest_command_ignores_genuine_passthrough() {
+        // Real, distant commands should never be flagged as typos.
+        assert_eq!(suggest_command("definitelynotarealcmd123"), None);
+        assert_eq!(suggest_command("python"), None);
+        // Too short to reason about — avoid noisy false positives.
+        assert_eq!(suggest_command("ab"), None);
+    }
+
+    #[test]
+    fn test_suggest_command_exact_match_returns_none() {
+        // An exact command name isn't a typo, so no suggestion.
+        assert_eq!(suggest_command("verify"), None);
+    }
+
+    #[test]
     fn test_try_parse_git_with_dash_c_succeeds() {
         let result = Cli::try_parse_from(["tok", "git", "-C", "/path", "status"]);
         assert!(
@@ -3050,6 +3159,45 @@ mod tests {
                 result.is_err(),
                 "Meta-command '{}' with bad flag should fail to parse",
                 cmd
+            );
+        }
+    }
+
+    #[test]
+    fn test_tok_only_subcommand_groups_are_guarded() {
+        // TOK-only commands with subcommands (or no real binary equivalent) must be
+        // in the meta guard so a bad subcommand shows Clap's error instead of trying
+        // to exec a non-existent binary.
+        for cmd in [
+            "mem",
+            "memory",
+            "forgemap",
+            "hook",
+            "smart",
+            "security-inspect",
+        ] {
+            assert!(
+                TOK_META_COMMANDS.contains(&cmd),
+                "'{}' is TOK-only and must be a guarded meta-command",
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn test_bad_subcommand_on_groups_fails_to_parse() {
+        // These should produce a parse error (which run_fallback surfaces as a Clap
+        // usage error, since they're guarded meta-commands) rather than parsing.
+        for args in [
+            ["tok", "mem", "not-a-real-subcommand"],
+            ["tok", "memory", "not-a-real-subcommand"],
+            ["tok", "forgemap", "not-a-real-subcommand"],
+            ["tok", "hook", "not-a-real-subcommand"],
+        ] {
+            assert!(
+                Cli::try_parse_from(args.iter()).is_err(),
+                "{:?} should fail to parse (unknown subcommand)",
+                args
             );
         }
     }

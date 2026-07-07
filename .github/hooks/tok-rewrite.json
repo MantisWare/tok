@@ -7,6 +7,30 @@
         "cwd": ".",
         "timeout": 5
       }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "./.github/hooks/tok-memory-session.sh",
+        "cwd": ".",
+        "timeout": 10
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "./.github/hooks/tok-memory-prompt.sh",
+        "cwd": ".",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "./.github/hooks/tok-memory-extract.sh",
+        "cwd": ".",
+        "timeout": 10
+      }
     ]
   }
 }
