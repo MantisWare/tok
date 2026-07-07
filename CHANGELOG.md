@@ -5,6 +5,13 @@ All notable changes to tok (Token Optimization Kit) will be documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/MantisWare/tok/compare/v0.1.24...v0.2.0) (2026-07-07)
+
+
+### Features
+
+* improve CLI error UX with typo suggestions and memory hooks ([f6bee6f](https://github.com/MantisWare/tok/commit/f6bee6ff611310b331c6789ca6a968e2eda4235a))
+
 ## [0.35.0](https://github.com/MantisWare/tok/compare/v0.34.3...v0.35.0) (2026-04-06)
 
 
