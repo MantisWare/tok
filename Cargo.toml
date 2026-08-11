@@ -1,6 +1,6 @@
 [package]
 name = "tok"
-version = "0.1.44"
+version = "0.1.45"
 edition = "2021"
 authors = ["Patrick Szymkowiak"]
 description = "Token Optimization Kit - High-performance CLI proxy to minimize LLM token consumption"
