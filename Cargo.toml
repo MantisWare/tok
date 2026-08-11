@@ -1,6 +1,6 @@
 [package]
 name = "tok"
-version = "0.1.24"
+version = "0.1.25"
 edition = "2021"
 authors = ["Patrick Szymkowiak"]
 description = "Token Optimization Kit - High-performance CLI proxy to minimize LLM token consumption"
@@ -12,8 +12,30 @@ keywords = ["cli", "llm", "token", "filter", "productivity"]
 categories = ["command-line-utilities", "development-tools"]
 
 [features]
-default = []
-mem-ast = []
+# The code graph ships on by default — `cargo install tok` gets tree-sitter
+# extraction, ranked retrieval, and the MCP server with no extra flags.
+default = [
+    "graph",
+    "lang-typescript",
+    "lang-python",
+    "lang-go",
+    "lang-rust",
+]
+
+# `graph` turns on the engine; each `lang-*` adds one grammar to it. They are
+# separate so a slim build can carry only the languages it needs — the C
+# grammars dominate both compile time and binary size. Dropping a language does
+# not stop it being indexed; it falls back to the regex extractor, which yields
+# symbols but no call edges.
+graph = ["dep:tree-sitter"]
+lang-typescript = ["graph", "dep:tree-sitter-typescript"]
+lang-python = ["graph", "dep:tree-sitter-python"]
+lang-go = ["graph", "dep:tree-sitter-go"]
+lang-rust = ["graph", "dep:tree-sitter-rust"]
+
+# Historical alias: `mem-ast` was the placeholder name for AST-backed indexing
+# before the graph landed. Kept so existing build scripts keep working.
+mem-ast = ["graph"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -38,6 +60,11 @@ flate2 = "1.0"
 quick-xml = "0.37"
 which = "8"
 automod = "1"
+tree-sitter = { version = "0.26.12", optional = true }
+tree-sitter-typescript = { version = "0.23.2", optional = true }
+tree-sitter-python = { version = "0.25.0", optional = true }
+tree-sitter-go = { version = "0.25.0", optional = true }
+tree-sitter-rust = { version = "0.24.2", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -49,6 +76,7 @@ toml = "0.8"
 assert_cmd = "2"
 predicates = "3"
 assert_fs = "1"
+insta = "1.48.0"
 
 [profile.release]
 opt-level = 3

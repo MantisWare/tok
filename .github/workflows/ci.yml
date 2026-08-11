@@ -64,6 +64,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all
 
+  # The graph feature is on by default, so nothing else in CI ever compiles the
+  # fallback paths. Without this job they rot silently and only break for people
+  # who build slim.
+  features:
+    name: feature combinations
+    needs: clippy
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "--no-default-features"
+          - "--no-default-features --features lang-rust"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build ${{ matrix.features }}
+
   security:
     name: Security Scan
     needs: clippy

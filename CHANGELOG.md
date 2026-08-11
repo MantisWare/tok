@@ -5,6 +5,32 @@ All notable changes to tok (Token Optimization Kit) will be documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Features
+
+* **mem:** tree-sitter code graph for TypeScript, TSX, JavaScript, Python, Go, and Rust. Indexing now resolves real references — calls, inheritance, interface satisfaction, typed member dispatch — instead of matching names with regex. Other languages keep the regex extractor as a fallback.
+* **mem:** new retrieval commands `tok mem ask`, `skeleton`, `grep`, and `map`. `ask` fuses BM25 over identifier-aware tokens with a personalized PageRank walk, so a query finds the symbol everything relevant points at even when its name never matched. Each reports what it saved against reading the underlying files, and the numbers land in `tok gain`.
+* **mem:** monorepo and multi-repo awareness. Sub-projects are discovered from workspace markers and ranked separately before fusion, results are labelled `[packages/api/]`, and `--in` narrows to a scope, a path, or a child repository. A parent directory of sibling git repositories federates across its children.
+* **mem:** `tok mem cards` writes a committed `.tok/map/` markdown layer — one wiring card per file plus an index — with hand-written notes preserved across regeneration. `tok mem check` reports drift; `--strict` exits non-zero for CI.
+* **mem:** optional `tok mem index --deep` sends source to your configured LLM for file summaries and per-symbol notes. Off by default; outbound payloads pass through the secret scanner, and results are cached by content hash. Configured under `[graph.llm]` or via `TOK_GRAPH_PROVIDER` / `TOK_GRAPH_MODEL` / `TOK_GRAPH_BASE_URL` / `TOK_GRAPH_API_KEY`.
+* **mcp:** `tok mcp` serves the graph over stdio JSON-RPC 2.0 with six tools (`ask`, `skeleton`, `grep`, `map`, `relations`, `check`). `tok init` registers it with Claude, Cursor, Gemini, Copilot, OpenCode, Windsurf, Cline, and Codex, and installs hooks that keep the graph fresh as files are edited. `tok init --no-graph` opts out.
+
+### Bug Fixes
+
+* **mem:** `tok mem index --incremental` is now genuinely incremental. It previously skipped only the pre-index clear and still re-parsed every file, and it left rows behind for deleted files — which is how `search` and `dead-code` could report code that no longer existed. Files are now skipped via a fingerprint cache and deleted files have their rows removed. **Behaviour change:** results for repositories with deleted files will differ from previous runs, because the stale rows are gone.
+* **init:** re-running `tok init` now upgrades an existing installation. It previously stopped as soon as it found the rewrite hook registered, so anyone who had run `tok init` before the agent-memory or code-graph hooks existed never received them and had no way to notice. Each hook family is reconciled on its own, and re-running against a current install still changes nothing.
+* **mem:** containment edges no longer take part in ranking or graph traversal. A file contains every symbol defined in it, which let the file node outrank each of them and pushed real symbols out of `ask` results; queries answered "which file is biggest" rather than "what does this question touch". Containment still builds the `skeleton` outline and the parent links in rendered output.
+* **mem:** `tok mem impact` refreshes its projection before answering, instead of reporting a blast radius from an index predating your last edit.
+* **mcp:** tools are advertised under the names graft published (`graft_find_code`, `graft_file_api`, `graft_find_all`, `graft_repo_map`, `graft_trace_calls`, `graft_check_freshness`) alongside the `tok_` names, so an existing graft agent configuration keeps working.
+* **mcp:** `tok mcp [dir]` accepts the repository to serve, for clients that launch the server from their own install directory, and no longer emits a telemetry ping onto the JSON-RPC stream.
+* **init:** `--no-graph` is honoured. The flag was parsed and then ignored, so graph hooks were installed regardless.
+
+### Notes
+
+* The `graph` feature is in the default set, so `cargo install tok` gets everything above. Per-language `lang-*` features allow slim builds, and `--no-default-features` builds without tree-sitter entirely. The grammars raise the binary from roughly 8MB to roughly 13MB.
+* Symbol ids in `memory.db` are unchanged. The graph is written to a repo-local `.tok/graph/` directory and projected into the existing `symbols` and `edges` tables, so `tok mem context|impact|relations` and recorded `episodes` keep working exactly as before.
+
 ## [0.35.0](https://github.com/MantisWare/tok/compare/v0.34.3...v0.35.0) (2026-04-06)
 
 
