@@ -9,8 +9,8 @@ use tempfile::NamedTempFile;
 use super::constants::{
     AFTER_AGENT_KEY, BEFORE_AGENT_KEY, BEFORE_TOOL_KEY, GEMINI_HOOK_FILE, HOOKS_JSON, HOOKS_SUBDIR,
     MEMORY_CACHE_PROMPT_HOOK_FILE, MEMORY_EXTRACT_HOOK_FILE, MEMORY_PROMPT_HOOK_FILE,
-    MEMORY_SESSION_HOOK_FILE, PRE_TOOL_USE_KEY, REWRITE_HOOK_FILE, SESSION_START_KEY,
-    SETTINGS_JSON, STOP_KEY, USER_PROMPT_SUBMIT_KEY,
+    MEMORY_SESSION_HOOK_FILE, POST_TOOL_USE_KEY, PRE_TOOL_USE_KEY, REWRITE_HOOK_FILE,
+    SESSION_START_KEY, SETTINGS_JSON, STOP_KEY, USER_PROMPT_SUBMIT_KEY,
 };
 use super::integrity;
 
@@ -37,6 +37,15 @@ const MEMORY_EXTRACT_HOOK: &str = include_str!("../../../hooks/shared/tok-memory
 const MEMORY_CACHE_PROMPT_HOOK: &str =
     include_str!("../../../hooks/shared/tok-memory-cache-prompt.sh");
 const MEMORY_HOOK_MARKER: &str = "tok-memory-";
+
+const GRAPH_SESSION_HOOK: &str = include_str!("../../../hooks/shared/tok-graph-session.sh");
+const GRAPH_POSTEDIT_HOOK: &str = include_str!("../../../hooks/shared/tok-graph-postedit.sh");
+const GRAPH_SESSION_HOOK_FILE: &str = "tok-graph-session.sh";
+const GRAPH_POSTEDIT_HOOK_FILE: &str = "tok-graph-postedit.sh";
+const GRAPH_HOOK_MARKER: &str = "tok-graph-";
+
+/// Claude tools that change a file, and so invalidate part of the graph.
+const EDIT_TOOL_MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit";
 
 // Embedded OpenCode plugin (auto-rewrite)
 const OPENCODE_PLUGIN: &str = include_str!("../../../hooks/opencode/tok.ts");
@@ -275,6 +284,19 @@ tok dotnet restore      # NuGet without the scroll
 tok dotnet format       # dotnet-format, trimmed transcript
 ```
 
+### Code Graph — reach for these BEFORE reading files
+```bash
+tok mem ask "<question>"  # The symbols that answer it, source inlined. Start here.
+tok mem skeleton <file>   # Every signature in a file, no bodies (~10% of the tokens)
+tok mem grep "<pattern>"  # Text search, each hit attributed to its enclosing symbol
+tok mem map               # Repo layout, hubs, entry points — orientation in one screen
+tok mem check             # Has the committed .tok/map/ drifted from the code?
+```
+Add `--in <path>` to `ask`/`grep` to stay inside one package of a monorepo.
+The same six are on MCP as `tok_ask`, `tok_skeleton`, `tok_grep`, `tok_map`,
+`tok_relations`, `tok_check`. The graph refreshes itself before each query, so
+an edit made a second ago is already visible.
+
 ### Code Intelligence (use when needed)
 ```bash
 tok mem index <dir>     # Index symbols, relationships, structure
@@ -400,6 +422,7 @@ pub fn run(
     codex: bool,
     patch_mode: PatchMode,
     verbose: u8,
+    graph: bool,
 ) -> Result<()> {
     // Validation: Codex mode conflicts
     if codex {
@@ -448,8 +471,12 @@ pub fn run(
     match (install_claude, install_opencode, claude_md, hook_only) {
         (false, true, _, _) => run_opencode_only_mode(verbose)?,
         (true, opencode, true, _) => run_claude_md_mode(global, verbose, opencode)?,
-        (true, opencode, false, true) => run_hook_only_mode(global, patch_mode, verbose, opencode)?,
-        (true, opencode, false, false) => run_default_mode(global, patch_mode, verbose, opencode)?,
+        (true, opencode, false, true) => {
+            run_hook_only_mode(global, patch_mode, verbose, opencode, graph)?
+        }
+        (true, opencode, false, false) => {
+            run_default_mode(global, patch_mode, verbose, opencode, graph)?
+        }
         (false, false, _, _) => {
             if !install_cursor {
                 anyhow::bail!("at least one of install_claude or install_opencode must be true")
@@ -459,7 +486,7 @@ pub fn run(
 
     // Cursor hooks (additive, installed alongside Claude Code)
     if install_cursor {
-        install_cursor_hooks(verbose)?;
+        install_cursor_hooks(verbose, graph)?;
     }
 
     if global {
@@ -691,7 +718,8 @@ fn remove_hook_from_settings(verbose: u8) -> Result<bool> {
 
     let removed_rewrite = remove_hook_from_json(&mut root);
     let removed_memory = remove_memory_hooks_from_claude_json(&mut root);
-    let removed = removed_rewrite || removed_memory;
+    let removed_graph = remove_graph_hooks_from_claude_json(&mut root);
+    let removed = removed_rewrite || removed_memory || removed_graph;
 
     if removed {
         // Backup original
@@ -875,6 +903,51 @@ fn uninstall_codex_at(codex_dir: &Path, verbose: u8) -> Result<Vec<String>> {
     Ok(removed)
 }
 
+/// Which families of hook a reconciliation had to add.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct AddedHooks {
+    rewrite: bool,
+    memory: bool,
+    graph: bool,
+}
+
+impl AddedHooks {
+    fn any(self) -> bool {
+        self.rewrite || self.memory || self.graph
+    }
+}
+
+/// Bring a Claude `settings.json` up to the hook set this tok build installs.
+///
+/// Every family is checked independently, because the presence of one says
+/// nothing about the others: an install predating the memory or graph hooks has
+/// the rewrite hook and neither of theirs, and treating that as "already
+/// configured" would leave it upgraded in binary and not in configuration.
+///
+/// Mutates `root` and reports what it added; writes nothing.
+fn reconcile_claude_hooks(
+    root: &mut serde_json::Value,
+    hook_command: &str,
+    hooks_dir: Option<&Path>,
+    graph: bool,
+) -> AddedHooks {
+    let mut added = AddedHooks::default();
+
+    if !hook_already_present(root, hook_command) {
+        insert_hook_entry(root, hook_command);
+        added.rewrite = true;
+    }
+
+    if let Some(dir) = hooks_dir {
+        added.memory = patch_claude_memory_hooks(root, dir);
+        if graph {
+            added.graph = patch_claude_graph_hooks(root, dir);
+        }
+    }
+
+    added
+}
+
 /// Orchestrator: patch settings.json with TOK hook
 /// Handles reading, checking, prompting, merging, backing up, and atomic writing
 fn patch_settings_json(
@@ -882,6 +955,7 @@ fn patch_settings_json(
     mode: PatchMode,
     verbose: u8,
     include_opencode: bool,
+    graph: bool,
 ) -> Result<PatchResult> {
     let claude_dir = resolve_claude_dir()?;
     let settings_path = claude_dir.join(SETTINGS_JSON);
@@ -904,10 +978,15 @@ fn patch_settings_json(
         serde_json::json!({})
     };
 
-    // Check idempotency
-    if hook_already_present(&root, hook_command) {
+    // Work out every change on a copy first, so consent is asked for only when
+    // there is something to consent to.
+    let mut updated = root.clone();
+    let hooks_dir = hook_path.parent();
+    let added = reconcile_claude_hooks(&mut updated, hook_command, hooks_dir, graph);
+
+    if !added.any() {
         if verbose > 0 {
-            eprintln!("settings.json: hook already present");
+            eprintln!("settings.json: hooks already present");
         }
         return Ok(PatchResult::AlreadyPresent);
     }
@@ -929,15 +1008,24 @@ fn patch_settings_json(
         }
     }
 
-    // Deep-merge hook
-    insert_hook_entry(&mut root, hook_command);
-
-    if let Some(hooks_dir) = hook_path.parent() {
-        install_memory_hook_scripts(hooks_dir, "claude", verbose)?;
-        if patch_claude_memory_hooks(&mut root, hooks_dir) && verbose > 0 {
+    // Only now that the change is agreed to does anything reach the disk. The
+    // scripts are written unconditionally rather than only when newly
+    // registered, so an existing install picks up their current contents.
+    if let Some(dir) = hooks_dir {
+        install_memory_hook_scripts(dir, "claude", verbose)?;
+        if added.memory && verbose > 0 {
             eprintln!("settings.json: agent memory hooks added");
         }
+
+        if graph {
+            install_graph_hook_scripts(dir, "claude", verbose)?;
+            if added.graph && verbose > 0 {
+                eprintln!("settings.json: code graph hooks added");
+            }
+        }
     }
+
+    root = updated;
 
     // Backup original
     if settings_path.exists() {
@@ -954,7 +1042,7 @@ fn patch_settings_json(
         serde_json::to_string_pretty(&root).context("Failed to serialize settings.json")?;
     atomic_write(&settings_path, &serialized)?;
 
-    println!("\n  settings.json: hook added");
+    println!("\n  settings.json: hooks updated");
     if settings_path.with_extension("json.bak").exists() {
         println!(
             "  Backup: {}",
@@ -1101,7 +1189,23 @@ fn patch_claude_memory_hooks(root: &mut serde_json::Value, hooks_dir: &Path) -> 
 }
 
 fn insert_claude_hook_command(root: &mut serde_json::Value, event: &str, command: &Path) -> bool {
-    if claude_hook_command_present(root, event, MEMORY_HOOK_MARKER) {
+    insert_claude_hook_entry(root, event, command, MEMORY_HOOK_MARKER, None)
+}
+
+/// Insert a hook command, skipping it if one bearing `marker` is already
+/// registered for the event.
+///
+/// `matcher` restricts which tools trigger the hook. Claude treats an absent
+/// matcher as "every tool", which is right for lifecycle events and wrong for
+/// anything that reacts to a specific one.
+fn insert_claude_hook_entry(
+    root: &mut serde_json::Value,
+    event: &str,
+    command: &Path,
+    marker: &str,
+    matcher: Option<&str>,
+) -> bool {
+    if claude_hook_command_present(root, event, marker) {
         return false;
     }
 
@@ -1129,14 +1233,92 @@ fn insert_claude_hook_command(root: &mut serde_json::Value, event: &str, command
         .as_array_mut()
         .expect("hook event array");
 
-    event_arr.push(serde_json::json!({
+    let mut entry = serde_json::json!({
         "hooks": [{
             "type": "command",
             "command": cmd
         }]
-    }));
+    });
+
+    if let Some(matcher) = matcher {
+        entry["matcher"] = serde_json::json!(matcher);
+    }
+
+    event_arr.push(entry);
 
     true
+}
+
+/// Install the graph lifecycle hook scripts next to the other TOK hooks.
+#[cfg(unix)]
+fn install_graph_hook_scripts(hooks_dir: &Path, client: &str, verbose: u8) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scripts = [
+        (GRAPH_SESSION_HOOK_FILE, GRAPH_SESSION_HOOK),
+        (GRAPH_POSTEDIT_HOOK_FILE, GRAPH_POSTEDIT_HOOK),
+    ];
+
+    for (name, template) in scripts {
+        let path = hooks_dir.join(name);
+        let content = render_memory_hook_script(template, client);
+        write_if_changed(&path, &content, name, verbose)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("Failed to set permissions on {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn install_graph_hook_scripts(_hooks_dir: &Path, _client: &str, _verbose: u8) -> Result<()> {
+    Ok(())
+}
+
+/// Add Claude Code graph hooks: orientation at session start, refresh after an
+/// edit.
+fn patch_claude_graph_hooks(root: &mut serde_json::Value, hooks_dir: &Path) -> bool {
+    let session = hooks_dir.join(GRAPH_SESSION_HOOK_FILE);
+    let postedit = hooks_dir.join(GRAPH_POSTEDIT_HOOK_FILE);
+
+    let mut changed = false;
+    changed |= insert_claude_hook_entry(root, SESSION_START_KEY, &session, GRAPH_HOOK_MARKER, None);
+    changed |= insert_claude_hook_entry(
+        root,
+        POST_TOOL_USE_KEY,
+        &postedit,
+        GRAPH_HOOK_MARKER,
+        Some(EDIT_TOOL_MATCHER),
+    );
+    changed
+}
+
+/// Remove the graph hooks, leaving every other hook in place.
+fn remove_graph_hooks_from_claude_json(root: &mut serde_json::Value) -> bool {
+    let mut any = false;
+    for event in [SESSION_START_KEY, POST_TOOL_USE_KEY] {
+        let Some(arr) = root
+            .pointer_mut(&format!("/hooks/{event}"))
+            .and_then(|v| v.as_array_mut())
+        else {
+            continue;
+        };
+
+        let before = arr.len();
+        arr.retain(|entry| {
+            !entry
+                .get("hooks")
+                .and_then(|h| h.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|hook| hook.get("command").and_then(|c| c.as_str()))
+                .any(|cmd| cmd.contains(GRAPH_HOOK_MARKER))
+        });
+
+        any |= arr.len() < before;
+    }
+
+    any
 }
 
 fn claude_hook_command_present(root: &serde_json::Value, event: &str, needle: &str) -> bool {
@@ -1304,6 +1486,7 @@ fn run_default_mode(
     _patch_mode: PatchMode,
     _verbose: u8,
     _install_opencode: bool,
+    _graph: bool,
 ) -> Result<()> {
     eprintln!("[warn] Hook-based mode requires Unix (macOS/Linux).");
     eprintln!("    Windows: use --claude-md mode for full injection.");
@@ -1317,6 +1500,7 @@ fn run_default_mode(
     patch_mode: PatchMode,
     verbose: u8,
     install_opencode: bool,
+    graph: bool,
 ) -> Result<()> {
     if !global {
         // Local init: inject CLAUDE.md + generate project-local filters template
@@ -1367,7 +1551,8 @@ fn run_default_mode(
     }
 
     // 5. Patch settings.json
-    let patch_result = patch_settings_json(&hook_path, patch_mode, verbose, install_opencode)?;
+    let patch_result =
+        patch_settings_json(&hook_path, patch_mode, verbose, install_opencode, graph)?;
 
     // Report result
     match patch_result {
@@ -1451,6 +1636,7 @@ fn run_hook_only_mode(
     _patch_mode: PatchMode,
     _verbose: u8,
     _install_opencode: bool,
+    _graph: bool,
 ) -> Result<()> {
     anyhow::bail!("Hook install requires Unix (macOS/Linux). Use WSL or --claude-md mode.")
 }
@@ -1461,6 +1647,7 @@ fn run_hook_only_mode(
     patch_mode: PatchMode,
     verbose: u8,
     install_opencode: bool,
+    graph: bool,
 ) -> Result<()> {
     if !global {
         eprintln!("[warn] Warning: --hook-only only makes sense with --global");
@@ -1495,7 +1682,8 @@ fn run_hook_only_mode(
     );
 
     // Patch settings.json
-    let patch_result = patch_settings_json(&hook_path, patch_mode, verbose, install_opencode)?;
+    let patch_result =
+        patch_settings_json(&hook_path, patch_mode, verbose, install_opencode, graph)?;
 
     // Report result
     match patch_result {
@@ -2004,7 +2192,7 @@ fn remove_opencode_plugin(verbose: u8) -> Result<Vec<PathBuf>> {
 // ─── Cursor Agent support ─────────────────────────────────────────────
 
 /// Install Cursor hooks: hook script + hooks.json
-fn install_cursor_hooks(verbose: u8) -> Result<()> {
+fn install_cursor_hooks(verbose: u8, graph: bool) -> Result<()> {
     let cursor_dir = resolve_cursor_dir()?;
     let hooks_dir = cursor_dir.join("hooks");
     fs::create_dir_all(&hooks_dir).with_context(|| {
@@ -2028,6 +2216,9 @@ fn install_cursor_hooks(verbose: u8) -> Result<()> {
     )?;
 
     install_memory_hook_scripts(&hooks_dir, "cursor", verbose)?;
+    if graph {
+        install_graph_hook_scripts(&hooks_dir, "cursor", verbose)?;
+    }
 
     #[cfg(unix)]
     {
@@ -2049,7 +2240,7 @@ fn install_cursor_hooks(verbose: u8) -> Result<()> {
 
     // 3. Create or patch hooks.json (preToolUse + sessionStart + memory lifecycle)
     let hooks_json_path = cursor_dir.join(HOOKS_JSON);
-    let patched = patch_cursor_hooks_json(&hooks_json_path, verbose)?;
+    let patched = patch_cursor_hooks_json(&hooks_json_path, verbose, graph)?;
 
     // Report
     let any_changed = hook_changed || session_changed;
@@ -2076,7 +2267,7 @@ fn install_cursor_hooks(verbose: u8) -> Result<()> {
 
 /// Patch ~/.cursor/hooks.json to add TOK preToolUse + sessionStart hooks.
 /// Returns true if the file was modified.
-fn patch_cursor_hooks_json(path: &Path, verbose: u8) -> Result<bool> {
+fn patch_cursor_hooks_json(path: &Path, verbose: u8, graph: bool) -> Result<bool> {
     let mut root = if path.exists() {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
@@ -2094,8 +2285,13 @@ fn patch_cursor_hooks_json(path: &Path, verbose: u8) -> Result<bool> {
     let has_session = cursor_hook_entry_present(&root, "sessionStart", SESSION_HOOK_FILE);
     let has_cache = cursor_hook_entry_present(&root, "beforeSubmitPrompt", MEMORY_HOOK_MARKER);
     let has_extract = cursor_hook_entry_present(&root, "afterAgentResponse", MEMORY_HOOK_MARKER);
+    // Cursor takes one sessionStart hook and tok-session.sh already composes
+    // the TOK awareness text with memory, so the graph joins there rather than
+    // as a second entry that would be ignored.
+    let wants_postedit =
+        graph && !cursor_hook_entry_present(&root, "afterFileEdit", GRAPH_HOOK_MARKER);
 
-    if has_rewrite && has_session && has_cache && has_extract {
+    if has_rewrite && has_session && has_cache && has_extract && !wants_postedit {
         if verbose > 0 {
             eprintln!("Cursor hooks.json: all TOK entries already present");
         }
@@ -2136,6 +2332,15 @@ fn patch_cursor_hooks_json(path: &Path, verbose: u8) -> Result<bool> {
             "afterAgentResponse",
             serde_json::json!({
                 "command": format!("./hooks/{}", MEMORY_EXTRACT_HOOK_FILE)
+            }),
+        );
+    }
+    if wants_postedit {
+        insert_cursor_hook_array_entry(
+            &mut root,
+            "afterFileEdit",
+            serde_json::json!({
+                "command": format!("./hooks/{}", GRAPH_POSTEDIT_HOOK_FILE)
             }),
         );
     }
@@ -2218,6 +2423,8 @@ fn remove_cursor_hooks(verbose: u8) -> Result<Vec<String>> {
         MEMORY_PROMPT_HOOK_FILE,
         MEMORY_EXTRACT_HOOK_FILE,
         MEMORY_CACHE_PROMPT_HOOK_FILE,
+        GRAPH_SESSION_HOOK_FILE,
+        GRAPH_POSTEDIT_HOOK_FILE,
     ] {
         let path = cursor_dir.join(HOOKS_SUBDIR).join(file_name);
         if path.exists() {
@@ -2267,12 +2474,15 @@ fn remove_cursor_hooks_from_json(root: &mut serde_json::Value) -> bool {
         MEMORY_PROMPT_HOOK_FILE,
         MEMORY_EXTRACT_HOOK_FILE,
         MEMORY_CACHE_PROMPT_HOOK_FILE,
+        GRAPH_SESSION_HOOK_FILE,
+        GRAPH_POSTEDIT_HOOK_FILE,
     ];
     let events = [
         "preToolUse",
         "sessionStart",
         "beforeSubmitPrompt",
         "afterAgentResponse",
+        "afterFileEdit",
         "stop",
     ];
     let mut any_removed = false;
@@ -2977,10 +3187,24 @@ tok ruff check . / mypy . / rubocop / golangci-lint run / format
 tok gt log / submit / sync / restack / create / branch
 ```
 
+## Code Graph — try these before reading files
+
+```bash
+tok mem ask "<question>"   # Ranked symbols with source inlined. Start here.
+tok mem skeleton <file>    # Every signature, no bodies
+tok mem grep "<pattern>"   # Text search grouped by enclosing symbol
+tok mem map                # Layout, hubs, entry points
+tok mem check              # Drift between .tok/map/ and the code
+```
+
+Also on MCP as `tok_ask`, `tok_skeleton`, `tok_grep`, `tok_map`,
+`tok_relations`, `tok_check`.
+
 ## Code Intelligence
 
 ```bash
 tok mem index <dir>        # Index symbols and structure
+tok mem index --deep       # Plus LLM summaries (opt-in)
 tok mem search <query>     # Full-text search (BM25)
 tok mem find <symbol>      # Exact or fuzzy symbol lookup
 tok mem context <symbol>   # Callers, callees, type refs
@@ -3259,7 +3483,7 @@ fn detect_copilot() -> AgentStatus {
 
 /// Install TOK hooks for all supported agents in one shot.
 /// Errors per agent are reported as warnings; the run continues.
-pub fn run_all(verbose: u8) -> Result<()> {
+pub fn run_all(verbose: u8, graph: bool) -> Result<()> {
     println!("Installing TOK for all supported agents...\n");
 
     let mut ok = 0u8;
@@ -3292,11 +3516,12 @@ pub fn run_all(verbose: u8) -> Result<()> {
             false, // codex (handled separately)
             PatchMode::Auto,
             verbose,
+            graph,
         )
     );
 
     // Cursor (global)
-    try_agent!("Cursor", install_cursor_hooks(verbose));
+    try_agent!("Cursor", install_cursor_hooks(verbose, graph));
 
     // Codex (global)
     try_agent!("Codex", run_codex_mode(true, verbose));
@@ -3564,6 +3789,7 @@ More notes
             true,
             PatchMode::Auto,
             0,
+            true,
         )
         .unwrap_err();
         assert_eq!(
@@ -3586,6 +3812,7 @@ More notes
             true,
             PatchMode::Skip,
             0,
+            true,
         )
         .unwrap_err();
         assert_eq!(
@@ -4069,6 +4296,262 @@ More notes
 
         let session = json_content["hooks"]["sessionStart"].as_array().unwrap();
         assert_eq!(session.len(), 0);
+    }
+
+    // --------------------------------------------------- code graph hooks
+
+    #[test]
+    fn graph_hooks_register_for_session_start_and_edits() {
+        let mut settings = serde_json::json!({});
+
+        let changed = patch_claude_graph_hooks(&mut settings, Path::new("/hooks"));
+
+        assert!(changed);
+        assert!(claude_hook_command_present(
+            &settings,
+            SESSION_START_KEY,
+            GRAPH_HOOK_MARKER
+        ));
+        assert!(claude_hook_command_present(
+            &settings,
+            POST_TOOL_USE_KEY,
+            GRAPH_HOOK_MARKER
+        ));
+    }
+
+    /// Without a matcher Claude runs the hook after every tool, including reads
+    /// and shell commands that cannot have changed a file.
+    #[test]
+    fn the_post_edit_hook_only_fires_for_editing_tools() {
+        let mut settings = serde_json::json!({});
+        patch_claude_graph_hooks(&mut settings, Path::new("/hooks"));
+
+        let entry = &settings["hooks"][POST_TOOL_USE_KEY][0];
+
+        assert_eq!(entry["matcher"], EDIT_TOOL_MATCHER);
+    }
+
+    /// Lifecycle hooks apply to the session, not to one tool.
+    #[test]
+    fn the_session_hook_carries_no_matcher() {
+        let mut settings = serde_json::json!({});
+        patch_claude_graph_hooks(&mut settings, Path::new("/hooks"));
+
+        assert!(settings["hooks"][SESSION_START_KEY][0]
+            .get("matcher")
+            .is_none());
+    }
+
+    #[test]
+    fn registering_graph_hooks_twice_adds_nothing() {
+        let mut settings = serde_json::json!({});
+        patch_claude_graph_hooks(&mut settings, Path::new("/hooks"));
+
+        let changed = patch_claude_graph_hooks(&mut settings, Path::new("/hooks"));
+
+        assert!(!changed);
+        assert_eq!(
+            settings["hooks"][SESSION_START_KEY]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    /// Both register on SessionStart, and neither may displace the other.
+    #[test]
+    fn graph_and_memory_session_hooks_coexist() {
+        let mut settings = serde_json::json!({});
+        let hooks_dir = Path::new("/hooks");
+
+        patch_claude_memory_hooks(&mut settings, hooks_dir);
+        patch_claude_graph_hooks(&mut settings, hooks_dir);
+
+        assert!(claude_hook_command_present(
+            &settings,
+            SESSION_START_KEY,
+            MEMORY_HOOK_MARKER
+        ));
+        assert!(claude_hook_command_present(
+            &settings,
+            SESSION_START_KEY,
+            GRAPH_HOOK_MARKER
+        ));
+    }
+
+    #[test]
+    fn removing_graph_hooks_leaves_memory_and_user_hooks_alone() {
+        let mut settings = serde_json::json!({});
+        let hooks_dir = Path::new("/hooks");
+        patch_claude_memory_hooks(&mut settings, hooks_dir);
+        patch_claude_graph_hooks(&mut settings, hooks_dir);
+        settings["hooks"][SESSION_START_KEY]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "hooks": [{ "type": "command", "command": "/my/own/hook.sh" }]
+            }));
+
+        let removed = remove_graph_hooks_from_claude_json(&mut settings);
+
+        assert!(removed);
+        assert!(!claude_hook_command_present(
+            &settings,
+            SESSION_START_KEY,
+            GRAPH_HOOK_MARKER
+        ));
+        assert!(claude_hook_command_present(
+            &settings,
+            SESSION_START_KEY,
+            MEMORY_HOOK_MARKER
+        ));
+        assert!(claude_hook_command_present(
+            &settings,
+            SESSION_START_KEY,
+            "/my/own/hook.sh"
+        ));
+    }
+
+    #[test]
+    fn removing_graph_hooks_that_were_never_added_reports_nothing() {
+        let mut settings = serde_json::json!({});
+
+        assert!(!remove_graph_hooks_from_claude_json(&mut settings));
+    }
+
+    /// The upgrade path: an install predating the graph still has only the
+    /// rewrite hook, and re-running `tok init` has to notice that.
+    #[test]
+    fn an_existing_install_gains_the_hooks_it_predates() {
+        let hooks_dir = std::path::Path::new("/home/u/.claude/hooks");
+        let rewrite = hooks_dir.join(REWRITE_HOOK_FILE);
+        let command = rewrite.to_string_lossy().to_string();
+
+        let mut settings = serde_json::json!({});
+        insert_hook_entry(&mut settings, &command);
+        let before = settings.clone();
+
+        let added = reconcile_claude_hooks(&mut settings, &command, Some(hooks_dir), true);
+
+        assert!(!added.rewrite, "the rewrite hook was already registered");
+        assert!(added.memory, "memory hooks should be added on upgrade");
+        assert!(added.graph, "graph hooks should be added on upgrade");
+        assert!(added.any());
+        assert_ne!(settings, before, "settings were left untouched");
+        assert!(claude_hook_command_present(
+            &settings,
+            POST_TOOL_USE_KEY,
+            GRAPH_HOOK_MARKER
+        ));
+    }
+
+    /// Re-running against a fully configured install must be a no-op, or every
+    /// `tok init` would rewrite the file and print a change it did not make.
+    #[test]
+    fn a_current_install_reconciles_to_no_change() {
+        let hooks_dir = std::path::Path::new("/home/u/.claude/hooks");
+        let command = hooks_dir
+            .join(REWRITE_HOOK_FILE)
+            .to_string_lossy()
+            .into_owned();
+
+        let mut settings = serde_json::json!({});
+        reconcile_claude_hooks(&mut settings, &command, Some(hooks_dir), true);
+        let settled = settings.clone();
+
+        let added = reconcile_claude_hooks(&mut settings, &command, Some(hooks_dir), true);
+
+        assert!(!added.any(), "a second pass claimed to add {added:?}");
+        assert_eq!(settings, settled);
+    }
+
+    /// `--no-graph` must stay honoured on the upgrade path too.
+    #[test]
+    fn reconciling_without_graph_leaves_the_graph_hooks_out() {
+        let hooks_dir = std::path::Path::new("/home/u/.claude/hooks");
+        let command = hooks_dir
+            .join(REWRITE_HOOK_FILE)
+            .to_string_lossy()
+            .into_owned();
+
+        let mut settings = serde_json::json!({});
+        let added = reconcile_claude_hooks(&mut settings, &command, Some(hooks_dir), false);
+
+        assert!(!added.graph);
+        assert!(!claude_hook_command_present(
+            &settings,
+            POST_TOOL_USE_KEY,
+            GRAPH_HOOK_MARKER
+        ));
+    }
+
+    #[test]
+    fn cursor_registers_the_post_edit_hook_on_file_edits() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(HOOKS_JSON);
+
+        patch_cursor_hooks_json(&path, 0, true).expect("patch");
+
+        let root: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("json");
+        assert!(cursor_hook_entry_present(
+            &root,
+            "afterFileEdit",
+            GRAPH_POSTEDIT_HOOK_FILE
+        ));
+    }
+
+    #[test]
+    fn no_graph_leaves_the_post_edit_hook_out_but_installs_the_rest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(HOOKS_JSON);
+
+        patch_cursor_hooks_json(&path, 0, false).expect("patch");
+
+        let root: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("json");
+        assert!(
+            !cursor_hook_entry_present(&root, "afterFileEdit", GRAPH_POSTEDIT_HOOK_FILE),
+            "--no-graph still registered the graph post-edit hook"
+        );
+        assert!(cursor_hook_entry_present(
+            &root,
+            "preToolUse",
+            REWRITE_HOOK_FILE
+        ));
+    }
+
+    #[test]
+    fn cursor_graph_hooks_are_removed_on_uninstall() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(HOOKS_JSON);
+        patch_cursor_hooks_json(&path, 0, true).expect("patch");
+        let mut root: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("json");
+
+        assert!(remove_cursor_hooks_from_json(&mut root));
+
+        assert!(!cursor_hook_entry_present(
+            &root,
+            "afterFileEdit",
+            GRAPH_POSTEDIT_HOOK_FILE
+        ));
+    }
+
+    /// The scripts are embedded at compile time, so a rename that breaks the
+    /// contract with the CLI should fail the build's tests, not a user's hook.
+    #[test]
+    fn the_graph_hook_scripts_call_the_commands_they_advertise() {
+        assert!(GRAPH_SESSION_HOOK.contains("tok hook graph-session"));
+        assert!(GRAPH_POSTEDIT_HOOK.contains("tok hook graph-postedit"));
+    }
+
+    /// A post-edit hook that prints is parsed as a hook directive or shown to
+    /// the user as noise.
+    #[test]
+    fn the_post_edit_hook_stays_silent() {
+        assert!(GRAPH_POSTEDIT_HOOK.contains(">/dev/null 2>&1 || true"));
     }
 
     #[test]
