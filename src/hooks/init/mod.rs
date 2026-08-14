@@ -2528,7 +2528,10 @@ fn show_claude_config() -> Result<()> {
     let global_claude_md = claude_dir.join(CLAUDE_MD);
     let local_claude_md = PathBuf::from(CLAUDE_MD);
 
-    println!("tok Configuration:\n");
+    println!(
+        "tok Configuration (version {}):\n",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Check hook
     if hook_path.exists() {
