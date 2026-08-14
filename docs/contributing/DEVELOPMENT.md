@@ -36,6 +36,20 @@ If your shell wraps `cargo` or prints errors like `command not found: -e`, run b
 bash -lc 'cd /path/to/tok && cargo build'
 ```
 
+### Feature flags
+
+The `graph` feature — tree-sitter extraction and everything built on it — is **in the default set**, so a plain `cargo install` gets it. Two other shapes need to keep compiling:
+
+```bash
+# Slim build: one language's grammar instead of all of them
+cargo build --no-default-features --features graph,graph-rust
+
+# No graph at all: filters only, regex symbol indexing
+cargo build --no-default-features
+```
+
+The C grammars dominate both build time and binary size, which is why the per-language features exist. Adding a grammar means adding its feature and wiring it into `src/graph/extract/`.
+
 ## Run without installing
 
 ```bash

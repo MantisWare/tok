@@ -1,7 +1,7 @@
 //! Code quality analysis: dead code detection, centrality, bridges,
 //! community detection, and cyclomatic complexity estimation.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
@@ -242,7 +242,12 @@ pub fn estimate_complexity(
         }
     }
 
-    results.sort_by(|a, b| b.complexity.cmp(&a.complexity));
+    results.sort_by(|a, b| {
+        b.complexity
+            .cmp(&a.complexity)
+            .then_with(|| a.file_path.cmp(&b.file_path))
+            .then_with(|| a.line_start.cmp(&b.line_start))
+    });
     results.truncate(limit);
 
     Ok(results)
@@ -263,7 +268,11 @@ pub fn detect_communities(
         .query_map(params![repo_id], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    let mut adj: HashMap<String, HashSet<String>> = HashMap::new();
+    // Ordered maps throughout: hash iteration order varies per process, and it
+    // decides both which component is found first and which members a
+    // community reports, so an unordered walk makes the output unstable across
+    // identical runs.
+    let mut adj: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (src, tgt) in &edges {
         adj.entry(src.clone()).or_default().insert(tgt.clone());
         adj.entry(tgt.clone()).or_default().insert(src.clone());
@@ -297,6 +306,10 @@ pub fn detect_communities(
         }
 
         if component.len() >= min_size {
+            // Discovery order is BFS order, which reads oddly in a label and
+            // makes the five reported members depend on traversal accidents.
+            component.sort();
+
             // Resolve symbol names for the label
             let member_names: Vec<String> = component
                 .iter()
@@ -328,7 +341,11 @@ pub fn detect_communities(
         }
     }
 
-    communities.sort_by(|a, b| b.member_count.cmp(&a.member_count));
+    communities.sort_by(|a, b| {
+        b.member_count
+            .cmp(&a.member_count)
+            .then_with(|| a.label.cmp(&b.label))
+    });
     communities.truncate(limit);
 
     Ok(communities)
@@ -368,8 +385,8 @@ pub fn find_bridge_symbols(
          WHERE e.repo_id = ?1",
     )?;
 
-    let mut bridge_counts: HashMap<String, (String, String, String, HashSet<usize>)> =
-        HashMap::new();
+    let mut bridge_counts: BTreeMap<String, (String, String, String, HashSet<usize>)> =
+        BTreeMap::new();
 
     let rows: Vec<(String, String, String, String, String)> = stmt
         .query_map(params![repo_id], |row| {
@@ -413,8 +430,160 @@ pub fn find_bridge_symbols(
         })
         .collect();
 
-    results.sort_by(|a, b| b.communities_connected.cmp(&a.communities_connected));
+    // Ties are common — most symbols bridge exactly two communities — so the
+    // tie-break decides what `--limit` actually returns.
+    results.sort_by(|a, b| {
+        b.communities_connected
+            .cmp(&a.communities_connected)
+            .then_with(|| a.file_path.cmp(&b.file_path))
+            .then_with(|| a.name.cmp(&b.name))
+    });
     results.truncate(limit);
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two disjoint clusters joined by two symbols that each bridge the same
+    /// number of communities — the tie that used to resolve at random.
+    fn tied_bridges_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE symbols (
+                id TEXT PRIMARY KEY, repo_id TEXT, name TEXT, kind TEXT,
+                file_path TEXT, line_start INTEGER DEFAULT 0, line_end INTEGER DEFAULT 0,
+                signature TEXT DEFAULT '', doc_comment TEXT DEFAULT '',
+                branch TEXT DEFAULT 'main', indexed_at TEXT DEFAULT '');
+             CREATE TABLE edges (
+                id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT,
+                edge_type TEXT, repo_id TEXT, branch TEXT DEFAULT 'main');",
+        )
+        .expect("schema");
+
+        // Same name in two files, mirroring the fixture repo where `Cache`
+        // exists in several languages.
+        let symbols = [
+            ("ts_cache", "Cache", "ts/cache.ts"),
+            ("py_cache", "Cache", "python/cache.py"),
+            ("ts_a", "AlphaTs", "ts/a.ts"),
+            ("ts_b", "BetaTs", "ts/b.ts"),
+            ("py_a", "AlphaPy", "python/a.py"),
+            ("py_b", "BetaPy", "python/b.py"),
+        ];
+        for (id, name, path) in symbols {
+            conn.execute(
+                "INSERT INTO symbols (id, repo_id, name, kind, file_path)
+                 VALUES (?1, 'r', ?2, 'Class', ?3)",
+                params![id, name, path],
+            )
+            .expect("insert symbol");
+        }
+
+        for (src, tgt) in [
+            ("ts_cache", "ts_a"),
+            ("ts_cache", "ts_b"),
+            ("ts_a", "ts_b"),
+            ("py_cache", "py_a"),
+            ("py_cache", "py_b"),
+            ("py_a", "py_b"),
+        ] {
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, edge_type, repo_id)
+                 VALUES (?1, ?2, 'CALLS', 'r')",
+                params![src, tgt],
+            )
+            .expect("insert edge");
+        }
+
+        conn
+    }
+
+    #[test]
+    fn bridge_ordering_is_stable_across_runs() {
+        let conn = tied_bridges_db();
+
+        let first: Vec<_> = find_bridge_symbols(&conn, "r", 10)
+            .expect("bridges")
+            .iter()
+            .map(|b| (b.name.clone(), b.file_path.clone()))
+            .collect();
+
+        for _ in 0..25 {
+            let again: Vec<_> = find_bridge_symbols(&conn, "r", 10)
+                .expect("bridges")
+                .iter()
+                .map(|b| (b.name.clone(), b.file_path.clone()))
+                .collect();
+            assert_eq!(first, again, "identical input must give identical output");
+        }
+    }
+
+    /// The tie-break has to survive truncation too: `--limit 1` used to return
+    /// whichever tied symbol hash order happened to surface first.
+    #[test]
+    fn limiting_tied_bridges_picks_the_same_symbol_every_time() {
+        let conn = tied_bridges_db();
+
+        let picked: Vec<String> = (0..25)
+            .map(|_| {
+                find_bridge_symbols(&conn, "r", 1)
+                    .expect("bridges")
+                    .first()
+                    .map(|b| b.file_path.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+
+        let unique: HashSet<&String> = picked.iter().collect();
+        assert_eq!(
+            unique.len(),
+            1,
+            "limit must be deterministic, got {picked:?}"
+        );
+    }
+
+    #[test]
+    fn community_membership_is_stable_across_runs() {
+        let conn = tied_bridges_db();
+
+        let first: Vec<String> = detect_communities(&conn, "r", 2, 10)
+            .expect("communities")
+            .iter()
+            .map(|c| c.label.clone())
+            .collect();
+
+        for _ in 0..25 {
+            let again: Vec<String> = detect_communities(&conn, "r", 2, 10)
+                .expect("communities")
+                .iter()
+                .map(|c| c.label.clone())
+                .collect();
+            assert_eq!(first, again);
+        }
+    }
+
+    /// Only the first few members are reported, so an unstable traversal
+    /// changes *which* members appear, not merely their order.
+    #[test]
+    fn community_members_are_stable_across_runs() {
+        let conn = tied_bridges_db();
+
+        let members = |c: &Connection| -> Vec<Vec<String>> {
+            detect_communities(c, "r", 2, 10)
+                .expect("communities")
+                .iter()
+                .map(|community| community.members.clone())
+                .collect()
+        };
+
+        let first = members(&conn);
+        assert!(!first.is_empty(), "fixture should form communities");
+
+        for _ in 0..25 {
+            assert_eq!(first, members(&conn));
+        }
+    }
 }

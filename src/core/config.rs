@@ -27,6 +27,8 @@ pub struct Config {
     pub slm: crate::security::config::SlmConfig,
     #[serde(default)]
     pub memory: crate::agent_memory::AgentMemoryConfig,
+    #[serde(default)]
+    pub graph: crate::graph::config::GraphConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

@@ -308,6 +308,10 @@ Start here, then drill down into each README for file-level details.
 | [`learn/`](../src/learn/README.md) | CLI correction detection | Error classification, correction pair detection, rule generation |
 | [`parser/`](../src/parser/README.md) | Parser infrastructure | Canonical types (TestResult, LintResult, etc.), 3-tier format modes, migration guide |
 | [`filters/`](../src/filters/README.md) | TOML filter configs | TOML DSL syntax, 8-stage pipeline, inline testing, naming conventions |
+| [`graph/`](../src/graph/mod.rs) | **Code graph** — tree-sitter extraction, reference resolution, incremental build, `.tok/graph/` store, SQLite projection, scope and workspace discovery | _(module-level `//!` docs)_ |
+| [`query/`](../src/query/mod.rs) | Retrieval over the graph — BM25, personalized PageRank, RRF fusion, `ask`/`skeleton`/`grep`/`map` rendering, scope-aware and federated ranking | _(module-level `//!` docs)_ |
+| [`markdown/`](../src/markdown/mod.rs) | Committed `.tok/map/` card layer, generated-block merging, drift detection | _(module-level `//!` docs)_ |
+| [`mcp/`](../src/mcp/mod.rs) | stdio JSON-RPC 2.0 server exposing the graph to agents | _(module-level `//!` docs)_ |
 
 ### `hooks/` — Deployed hook artifacts (root directory)
 

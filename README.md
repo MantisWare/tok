@@ -88,7 +88,7 @@ TOK isn’t just “prettier `git status`.” Six layers, same binary:
 | **Auto-rewrite hooks** | Transparent `git` → `tok git` in your agent | `tok init -g` |
 | **Analytics** | SQLite history, savings dashboards, missed-opportunity mining | `tok gain`, `tok discover` |
 | **Security (optional)** | Obfuscate PII/secrets before context; restore on the way back | `tok --security proxy …` |
-| **Code memory (`tok mem`)** | Index symbols, search, impact, dead-code — structural, not grep | `tok mem index .` |
+| **Code graph (`tok mem`)** | tree-sitter index, ranked retrieval, impact, dead-code — structural, not grep | `tok mem ask "how does auth work"` |
 | **ForgeMap** | Machine-readable headers + manifests for agent orientation | `tok forgemap init src/` |
 
 Don’t know where to start? `tok man` prints the whole menu; `tok man mem` or `tok man security` narrows it down.
@@ -117,7 +117,7 @@ Unknown subcommand? **Passthrough** — run the real binary, log metrics, move o
 
 > **Passthrough promise:** if TOK doesn’t recognize a subcommand, it runs the real tool unchanged and still logs the run. You can prefix everything with `tok` and never get stuck.
 
-Run `tok man` for the full catalog, or `tok man <topic>` (e.g. `git`, `mem`, `security`). Deep dive: **[docs/usage/FEATURES.md](docs/usage/FEATURES.md)**.
+Run `tok man` for the full catalog, or `tok man <topic>` (e.g. `git`, `mem`, `security`). Deep dive: **[docs/usage/FEATURES.md](docs/usage/FEATURES.md)**, or run `tok man`.
 
 ### Files & search
 
@@ -294,9 +294,9 @@ Habits that multiply TOK beyond “install the hook”:
 
 | Instead of | Prefer | Why |
 |------------|--------|-----|
-| Repeated `grep` for a symbol | `tok mem find` / `tok mem search` | Structural hits, not thousands of text lines |
-| `cat` on large files | `tok read -l minimal` or `-m N` | Strips noise; caps lines |
-| Orienting in a new repo | `tok mem index . --incremental`, `tok forgemap check` | Fewer full-file reads in chat context |
+| Repeated `grep` for a symbol | `tok mem ask` / `tok mem grep` | Ranked structural hits, not thousands of text lines |
+| `cat` on large files | `tok mem skeleton <file>`, `tok read -l minimal` | Signatures without bodies; strips noise |
+| Orienting in a new repo | `tok mem map`, `tok forgemap check` | Layout, hubs, and entry points instead of full-file reads |
 | Guessing missed savings | `tok discover --since 7` weekly | Shows proven commands still running unfiltered |
 | Silent 0% savings | `tok gain --failures`, `tok verify` | Stale hooks or parse fallbacks |
 
@@ -727,7 +727,20 @@ max_files = 20          # rotation limit
 
 [telemetry]
 enabled = false         # opt out of daily anonymous metrics (on by default)
+
+[graph.llm]
+enabled = false         # opt in to `tok mem index --deep`; off means indexing is offline and free
+provider = "openai"     # "openai" for any OpenAI-compatible endpoint, or "anthropic"
+model = "gpt-4o-mini"
+base_url = "http://localhost:11434/v1"  # optional — point at Ollama, Azure, or a proxy
+api_key_env = "MY_KEY"  # optional — defaults to OPENAI_API_KEY / ANTHROPIC_API_KEY
+max_files = 50          # ceiling per run, so a big repo can't surprise your bill
+max_symbols = 100
+max_chars = 8000        # how much of each file is sent
+timeout_secs = 30
 ```
+
+The key itself is never stored in the file — only the name of the variable to read it from. `enabled` is the one setting no environment variable can flip, so paid network calls always take a deliberate edit.
 
 ### Trusted local filters
 
@@ -759,7 +772,9 @@ cargo uninstall tok          # Remove binary
 
 ## tok mem — Structural Code Memory
 
-Grep finds *text*. **`tok mem`** finds *symbols* — who calls whom, what breaks if you rename a function, what’s been dead since the refactor. Local SQLite index, no cloud, no “send us your repo.”
+Grep finds *text*. **`tok mem`** finds *symbols* — who calls whom, what breaks if you rename a function, what’s been dead since the refactor. Local index, no cloud, no “send us your repo.”
+
+TypeScript, TSX, JavaScript, Python, Go, and Rust are parsed with tree-sitter into a real code graph; everything else falls back to the regex indexer. The graph lives in `.tok/graph/` inside the repo and is rebuilt automatically when a query notices the files moved on.
 
 **Workflow:** index once (or incrementally), then query instead of re-reading half the tree every session.
 
@@ -768,9 +783,17 @@ Grep finds *text*. **`tok mem`** finds *symbols* — who calls whom, what breaks
 tok mem index .                 # Full index (symbols + relationships)
 tok mem index . --incremental   # Only changed files
 tok mem index . --clear         # Wipe repo data, re-index from scratch
+tok mem index . --deep          # Also send source to your LLM for summaries
 tok mem repos                   # What’s indexed
 tok mem status                  # Health + counts
 tok mem forget my-repo          # Drop a repo from the DB
+
+# Ask the graph (auto-indexes on first use)
+tok mem ask "how does auth work"    # Ranked symbols: BM25 + graph walk
+tok mem ask "cache" --in packages/api   # Narrow to a scope, repo, or path
+tok mem skeleton src/foo.rs     # File outline: signatures, no bodies
+tok mem grep handleRequest      # Matches attributed to their symbol
+tok mem map                     # Repo overview: layout, hubs, entry points
 
 # Find & understand
 tok mem search "token tracking" # BM25 full-text over symbols
@@ -791,9 +814,40 @@ tok mem bridges                 # Symbols linking subgraphs
 tok mem communities             # Connected components
 tok mem dead-code               # Zero inbound refs ( --include-tests optional)
 tok mem complexity              # Cyclomatic complexity ranking
+
+# Committed markdown layer
+tok mem cards                   # Write .tok/map/ wiring cards + INDEX.md
+tok mem check                   # Report drift ( --strict exits 1, for CI)
 ```
 
-Optional **`mem-ast`** feature flag in Cargo for richer parsing on supported languages. Index lives next to tracking data under the tok data directory.
+Every retrieval command reports what it saved against reading the underlying files whole, and the numbers land in `tok gain` alongside the rest of TOK.
+
+### Monorepos and multi-repo workspaces
+
+Workspaces are detected from their markers — `pnpm-workspace.yaml`, `package.json#workspaces`, Cargo `[workspace] members`, `go.work`, or just a `go.mod` per directory. Each sub-project is ranked on its own terms and results are labelled `[packages/api/]`, so a query about “cache” doesn’t bury the API’s answer under the web app’s.
+
+A parent directory holding several independent git repositories works the same way: `tok mem ask` from the parent federates across the children, and `--in <repo>` narrows to one.
+
+### Optional `--deep` enrichment
+
+`tok mem index --deep` sends source to your configured LLM for file summaries and per-symbol notes. It is off by default — plain indexing is offline, deterministic, and free. Outbound payloads are routed through TOK’s secret scanner first, and results are cached by content hash so an unchanged file is never billed twice. Configure under `[graph.llm]` in `config.toml`, or with `TOK_GRAPH_PROVIDER` / `TOK_GRAPH_MODEL` / `TOK_GRAPH_BASE_URL` / `TOK_GRAPH_API_KEY`.
+
+### For agents
+
+`tok mcp [dir]` serves the graph over MCP (stdio, JSON-RPC 2.0). Six tools, each advertised twice — as `tok_ask`, `tok_skeleton`, `tok_grep`, `tok_map`, `tok_relations`, `tok_check`, and under the names graft published (`graft_find_code`, `graft_file_api`, `graft_find_all`, `graft_repo_map`, `graft_trace_calls`, `graft_check_freshness`) so an existing graft config keeps working unchanged.
+
+`tok init` registers the server with Claude, Cursor, Gemini, Copilot, OpenCode, Windsurf, Cline, and Codex, and installs the hooks that keep the graph fresh as files are edited. Re-running it upgrades an existing install in place: hooks added since you last ran it are installed even though the rewrite hook is already there, hook scripts are refreshed to the current binary's versions, a registration pointing at an old binary is rewritten, other MCP servers and settings in the same config are left alone, and the instruction section is replaced rather than appended. Running it again after that changes nothing. `tok init --no-graph` skips all of it; `tok init --uninstall` removes it.
+
+### Controlling the refresh
+
+Queries rebuild the graph incrementally before answering. Two variables override that:
+
+| Variable | Effect |
+| --- | --- |
+| `TOK_GRAPH_NO_REFRESH=1` | Never refresh — answer from the graph on disk. For CI and benchmarks that need a fixed input. |
+| `TOK_GRAPH_REFRESH=hash` | Detect edits by hashing content instead of comparing size and mtime. Slower, but correct on filesystems with coarse timestamps. |
+
+The graph engine ships in the default build. Per-language `lang-*` Cargo features exist for slim builds, and `--no-default-features` still produces a working `tok` — `index`, `search`, and `find` fall back to the regex indexer, and the graph-backed commands say so. The SQLite index lives next to tracking data under the tok data directory.
 
 `tok man mem` · implementation notes in **[docs/contributing/ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)**
 
@@ -894,6 +948,9 @@ For the full protocol specification, see **[docs/FORGEMAP.md](docs/FORGEMAP.md)*
 | See if hooks are lying | `tok init --show` · `tok verify` |
 | Dashboard / ROI | `tok gain` · `tok cc-economics` |
 | Find commands you forgot to tok | `tok discover` |
+| Understand code without reading it | `tok mem ask "how does X work"` |
+| A file's API in a tenth of the tokens | `tok mem skeleton <file>` |
+| Orient in an unfamiliar repo | `tok mem map` |
 | Map the codebase structurally | `tok mem index .` then `tok mem search …` |
 | Agent-readable file headers | `tok forgemap init src/` |
 | Redact secrets in context | `tok --security proxy …` or enable in config |
@@ -904,7 +961,8 @@ For the full protocol specification, see **[docs/FORGEMAP.md](docs/FORGEMAP.md)*
 
 ## Documentation
 
-- **[FEATURES.md](docs/usage/FEATURES.md)** — Complete functional reference (every command)
+- **[FEATURES.md](docs/usage/FEATURES.md)** — Reference for the command filters
+- **`tok man`** — Every command, including the code graph and MCP surfaces
 - **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — Fix common issues
 - **[INSTALL.md](INSTALL.md)** — Detailed installation guide
 - **[RELEASE.md](docs/contributing/RELEASE.md)** — Stable releases, Homebrew tap, maintainer checklist

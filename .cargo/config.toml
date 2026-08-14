@@ -1,0 +1,7 @@
+# The derived clap parser for the full `Commands` enum is stack-hungry in
+# debug builds — the parse tests in `src/main.rs` need ~2 MiB on rustc 1.91,
+# and newer toolchains/runners with smaller default thread stacks (Windows
+# defaults to 1 MiB) overflowed in CI. Pin a generous stack for test threads
+# so the result does not depend on the toolchain's default.
+[env]
+RUST_MIN_STACK = { value = "16777216", force = false }

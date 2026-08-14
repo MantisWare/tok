@@ -6,6 +6,9 @@ use colored::Colorize;
 use crate::mem::{db, evolution, graph, indexer, quality, search, symbols};
 use crate::MemCommands;
 
+mod retrieval;
+mod savings;
+
 /// Dispatch a `tok mem <subcommand>` to the correct handler.
 pub fn dispatch_mem(cmd: MemCommands) -> Result<i32> {
     match cmd {
@@ -15,7 +18,8 @@ pub fn dispatch_mem(cmd: MemCommands) -> Result<i32> {
             branch,
             incremental,
             clear,
-        } => run_index(&path, repo_id.as_deref(), &branch, incremental, clear),
+            deep,
+        } => run_index(&path, repo_id.as_deref(), &branch, incremental, clear, deep),
 
         MemCommands::Search {
             query,
@@ -99,6 +103,43 @@ pub fn dispatch_mem(cmd: MemCommands) -> Result<i32> {
             limit,
             min_complexity,
         } => run_complexity(repo_id.as_deref(), limit, min_complexity),
+
+        MemCommands::Ask {
+            query,
+            path,
+            limit,
+            lexical,
+            in_path,
+            no_tests,
+        } => retrieval::run_ask(&query, &path, limit, lexical, in_path.as_deref(), no_tests),
+
+        MemCommands::Skeleton { file, path } => retrieval::run_skeleton(file.as_deref(), &path),
+
+        MemCommands::Grep {
+            pattern,
+            path,
+            regex,
+            case_sensitive,
+            in_path,
+            limit,
+        } => retrieval::run_grep(
+            &pattern,
+            &path,
+            regex,
+            case_sensitive,
+            in_path.as_deref(),
+            limit,
+        ),
+
+        MemCommands::Map {
+            path,
+            max_dirs,
+            max_hubs,
+        } => retrieval::run_map(&path, max_dirs, max_hubs),
+
+        MemCommands::Cards { path } => retrieval::run_cards(&path),
+
+        MemCommands::Check { path, strict } => retrieval::run_check(&path, strict),
     }
 }
 
@@ -108,7 +149,18 @@ fn run_index(
     branch: &str,
     incremental: bool,
     clear: bool,
+    deep: bool,
 ) -> Result<i32> {
+    let root =
+        std::fs::canonicalize(path).with_context(|| format!("Cannot resolve path: {path}"))?;
+
+    // A workspace parent holds no source of its own. Indexing it as one
+    // repository would produce a graph whose paths belong to nobody, so each
+    // child is indexed on its own terms and the parent stores only the list.
+    if crate::graph::workspace::is_workspace_root(&root) {
+        return run_index_workspace(&root, branch, incremental, clear, deep);
+    }
+
     let conn = db::open()?;
 
     let resolved_repo_id = match repo_id {
@@ -155,6 +207,64 @@ fn run_index(
             "{} {} errors during indexing",
             "⚠".yellow(),
             stats.errors.len()
+        );
+    }
+
+    if deep {
+        retrieval::run_enrich(path)?;
+    }
+
+    Ok(0)
+}
+
+/// Index every repository under a workspace parent.
+///
+/// Each child is built exactly as it would be alone, so a repository's graph
+/// never depends on whether it was indexed through its parent.
+fn run_index_workspace(
+    root: &std::path::Path,
+    branch: &str,
+    incremental: bool,
+    clear: bool,
+    deep: bool,
+) -> Result<i32> {
+    let workspace = crate::graph::workspace::refresh(root)?;
+
+    if workspace.is_empty() {
+        eprintln!("{} No repositories found to index", "⚠".yellow());
+        return Ok(0);
+    }
+
+    eprintln!(
+        "{} Workspace: {} repositories",
+        "→".cyan(),
+        workspace.children.len().to_string().bold()
+    );
+
+    let mut failed = Vec::new();
+
+    for child in &workspace.children {
+        let path = root.join(child);
+        let Some(path) = path.to_str() else {
+            failed.push(child.clone());
+            continue;
+        };
+
+        // One child's failure must not stop the rest: a broken repository in
+        // the workspace is a reason to report it, not to leave the other four
+        // unsearchable.
+        if let Err(e) = run_index(path, Some(child), branch, incremental, clear, deep) {
+            eprintln!("{} {child}: {e}", "⚠".yellow());
+            failed.push(child.clone());
+        }
+    }
+
+    if !failed.is_empty() {
+        eprintln!(
+            "{} {} of {} repositories failed",
+            "⚠".yellow(),
+            failed.len(),
+            workspace.children.len()
         );
     }
 
@@ -333,6 +443,37 @@ fn run_relations(
     Ok(0)
 }
 
+/// Bring the SQLite projection up to date before a blast-radius query.
+///
+/// `impact` reads `symbols` and `edges`, which only change when the index runs.
+/// The graph-backed commands refresh themselves, so without this an agent that
+/// edits a file sees the edit in `ask` and misses it in `impact` — and `impact`
+/// is the one being asked "is this safe to change".
+///
+/// A failure is not fatal: the previous projection is stale, not wrong, and an
+/// unindexed repository has nothing to refresh.
+fn refresh_impact_projection(repo_id: Option<&str>) {
+    let Ok(root) = std::env::current_dir() else {
+        return;
+    };
+    if !crate::graph::store::GraphPaths::new(&root).exists() {
+        return;
+    }
+
+    let resolved = repo_id.map(str::to_string).unwrap_or_else(|| {
+        root.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string()
+    });
+
+    let Ok(conn) = db::open() else {
+        return;
+    };
+    let path = root.to_string_lossy();
+    let _ = indexer::index_directory(&conn, &path, &resolved, "main", true);
+}
+
 fn run_impact(
     name: &str,
     direction: &str,
@@ -340,6 +481,8 @@ fn run_impact(
     limit: usize,
     repo_id: Option<&str>,
 ) -> Result<i32> {
+    refresh_impact_projection(repo_id);
+
     let conn = db::open()?;
 
     let sym = match resolve_symbol(&conn, name, repo_id)? {
