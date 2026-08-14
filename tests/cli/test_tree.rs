@@ -24,6 +24,9 @@ fn tree_dirs_only() {
 }
 
 #[test]
+// On Windows, `tree` resolves to Microsoft's tree.com — a different tool with
+// different flags and output than the unix tree this filter shapes.
+#[cfg_attr(windows, ignore = "Windows tree.com is not the unix tree")]
 fn tree_shows_src() {
     skip_if_missing!("tree");
     tok_cmd()
