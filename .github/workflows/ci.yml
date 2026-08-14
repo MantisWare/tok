@@ -118,7 +118,7 @@ jobs:
       - name: Critical files check
         run: |
           echo "### Critical Files Modified" >> $GITHUB_STEP_SUMMARY
-          CRITICAL=$(git diff --name-only origin/master...HEAD | grep -E "(runner|summary|tracking|init|pnpm_cmd|container)\.rs|Cargo\.toml|workflows/.*\.yml" || true)
+          CRITICAL=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -E "(runner|summary|tracking|init|pnpm_cmd|container)\.rs|Cargo\.toml|workflows/.*\.yml" || true)
           if [ -n "$CRITICAL" ]; then
             echo "**HIGH RISK**: The following critical files were modified:" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
@@ -138,7 +138,7 @@ jobs:
       - name: Dangerous patterns scan
         run: |
           echo "### Dangerous Code Patterns" >> $GITHUB_STEP_SUMMARY
-          PATTERNS=$(git diff origin/master...HEAD | grep -E "Command::new\(\"sh\"|Command::new\(\"bash\"|\.env\(\"LD_PRELOAD|\.env\(\"PATH|reqwest::|std::net::|TcpStream|UdpSocket|unsafe \{|\.unwrap\(\) |panic!\(|todo!\(|unimplemented!\(" || true)
+          PATTERNS=$(git diff "origin/${{ github.base_ref }}...HEAD" | grep -E "Command::new\(\"sh\"|Command::new\(\"bash\"|\.env\(\"LD_PRELOAD|\.env\(\"PATH|reqwest::|std::net::|TcpStream|UdpSocket|unsafe \{|\.unwrap\(\) |panic!\(|todo!\(|unimplemented!\(" || true)
           if [ -n "$PATTERNS" ]; then
             echo "**Potentially dangerous patterns detected:**" >> $GITHUB_STEP_SUMMARY
             echo '```diff' >> $GITHUB_STEP_SUMMARY
@@ -160,7 +160,7 @@ jobs:
       - name: New dependencies check
         run: |
           echo "### Dependencies Changes" >> $GITHUB_STEP_SUMMARY
-          if git diff origin/master...HEAD Cargo.toml | grep -E "^\+.*=" | grep -v "^\+\+\+" > new_deps.txt; then
+          if git diff "origin/${{ github.base_ref }}...HEAD" Cargo.toml | grep -E "^\+.*=" | grep -v "^\+\+\+" > new_deps.txt; then
             echo "**New dependencies added:**" >> $GITHUB_STEP_SUMMARY
             echo '```toml' >> $GITHUB_STEP_SUMMARY
             cat new_deps.txt >> $GITHUB_STEP_SUMMARY
@@ -249,8 +249,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUM=${{ github.event.pull_request.number }}
-          gh pr diff "$PR_NUM" --name-only > changed_files.txt
-          gh pr diff "$PR_NUM" | head -c 12000 > diff.txt
+          # `gh pr diff` goes through the REST API, which rejects diffs over
+          # 20,000 lines (HTTP 406). Large PRs have to be diffed locally; the
+          # checkout already carries full history (fetch-depth: 0).
+          git fetch origin "${{ github.base_ref }}"
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed_files.txt
+          git diff "origin/${{ github.base_ref }}...HEAD" | head -c 12000 > diff.txt
           gh pr view "$PR_NUM" --json title,body --jq '"PR Title: \(.title)\nPR Description: \(.body)"' > pr_info.txt
 
       - name: Build prompt files
