@@ -30,7 +30,12 @@ pub fn run(
 
     let mut rg_cmd = resolved_command("rg");
     rg_cmd
-        .args(["-n", "--no-heading", &rg_pattern, path])
+        // -H/--with-filename forces the `file:` prefix even when searching a
+        // single file. Without it, rg omits the filename for a lone file, and
+        // a matched line that itself contains a colon (URLs, JSON, timestamps,
+        // Rust `::`) gets misparsed as `file:line:content` — mangling the
+        // filename, line number, and content. See parse_match_line.
+        .args(["-n", "-H", "--no-heading", &rg_pattern, path])
         .stdin(Stdio::null());
 
     if let Some(ft) = file_type {
@@ -48,8 +53,10 @@ pub fn run(
     let output = rg_cmd
         .output()
         .or_else(|_| {
+            // -H matches the rg invocation: always emit the filename so the
+            // single-file-with-colon case parses correctly on the fallback too.
             resolved_command("grep")
-                .args(["-rn", pattern, path])
+                .args(["-rnH", pattern, path])
                 .stdin(Stdio::null())
                 .output()
         })
@@ -90,15 +97,7 @@ pub fn run(
     };
 
     for line in stdout.lines() {
-        let parts: Vec<&str> = line.splitn(3, ':').collect();
-
-        let (file, line_num, content) = if parts.len() == 3 {
-            let ln = parts[1].parse().unwrap_or(0);
-            (parts[0].to_string(), ln, parts[2])
-        } else if parts.len() == 2 {
-            let ln = parts[0].parse().unwrap_or(0);
-            (path.to_string(), ln, parts[1])
-        } else {
+        let Some((file, line_num, content)) = parse_match_line(line, path) else {
             continue;
         };
 
@@ -152,6 +151,22 @@ pub fn run(
     Ok(exit_code)
 }
 
+/// Parse one `rg`/`grep -nH` output line of the form `file:line:content`.
+///
+/// Because `-H` is always passed, the filename is present on every line, so a
+/// 3-way split on the first two colons is unambiguous even when `content`
+/// itself contains colons. The 2-part branch is defensive: it only triggers if
+/// an upstream tool emits a filename-less `line:content` line, in which case we
+/// attribute it to the searched `path`.
+fn parse_match_line<'a>(line: &'a str, path: &str) -> Option<(String, usize, &'a str)> {
+    let parts: Vec<&str> = line.splitn(3, ':').collect();
+    match parts.as_slice() {
+        [file, num, content] => Some((file.to_string(), num.parse().unwrap_or(0), content)),
+        [num, content] => Some((path.to_string(), num.parse().unwrap_or(0), content)),
+        _ => None,
+    }
+}
+
 fn clean_line(line: &str, max_len: usize, context_re: Option<&Regex>, pattern: &str) -> String {
     let trimmed = line.trim();
 
@@ -192,7 +207,7 @@ fn clean_line(line: &str, max_len: usize, context_re: Option<&Regex>, pattern: &
                 format!("{}...", slice)
             }
         } else {
-            let t: String = trimmed.chars().take(max_len - 3).collect();
+            let t: String = trimmed.chars().take(max_len.saturating_sub(3)).collect();
             format!("{}...", t)
         }
     }
@@ -219,6 +234,62 @@ fn compact_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- parse_match_line: the single-file colon mangling regression ---
+
+    #[test]
+    fn parse_three_part_line() {
+        let parsed = parse_match_line("src/main.rs:42:fn main() {", ".");
+        assert_eq!(
+            parsed,
+            Some(("src/main.rs".to_string(), 42, "fn main() {"))
+        );
+    }
+
+    // Regression: a matched line whose content contains colons must keep the
+    // whole content and the correct file/line. With -H forcing the filename,
+    // the first two colons delimit file and line; the rest is content verbatim.
+    #[test]
+    fn parse_preserves_colons_in_content() {
+        let parsed = parse_match_line("single.txt:2:endpoint: https://example.com/api", ".");
+        assert_eq!(
+            parsed,
+            Some((
+                "single.txt".to_string(),
+                2,
+                "endpoint: https://example.com/api"
+            )),
+            "content after the line number must be preserved verbatim, colons and all"
+        );
+    }
+
+    #[test]
+    fn parse_rust_path_separator_in_content() {
+        let parsed = parse_match_line("lib.rs:10:use crate::core::utils;", ".");
+        assert_eq!(
+            parsed,
+            Some(("lib.rs".to_string(), 10, "use crate::core::utils;"))
+        );
+    }
+
+    #[test]
+    fn parse_two_part_line_attributed_to_path() {
+        // Defensive fallback: filename-less `line:content` → attributed to path.
+        let parsed = parse_match_line("7:some content", "query.txt");
+        assert_eq!(parsed, Some(("query.txt".to_string(), 7, "some content")));
+    }
+
+    #[test]
+    fn parse_unparseable_line_is_skipped() {
+        assert_eq!(parse_match_line("no-colons-here", "."), None);
+    }
+
+    #[test]
+    fn clean_line_tiny_max_len_does_not_panic() {
+        // max_len < 3 previously underflowed `max_len - 3`.
+        let out = clean_line("a long line with no pattern match", 2, None, "zzz");
+        assert!(!out.is_empty());
+    }
 
     #[test]
     fn test_clean_line() {
