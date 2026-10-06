@@ -25,6 +25,78 @@ fn glob_match_inner(pat: &[u8], name: &[u8]) -> bool {
     }
 }
 
+/// Walk `path`, returning the paths (relative to `path`, sorted) of entries
+/// whose filename matches `pattern` and whose type matches `want_dirs`.
+///
+/// Mirrors `find` semantics: hidden/dotfiles and `.gitignore`d files are
+/// included, because silently omitting them (the previous behavior) surprises
+/// callers who expect `find`. The one exception is the `.git` directory, which
+/// is pruned — it is never the target of a `find` in practice and would bury
+/// real results under thousands of internal objects.
+fn collect_matches(
+    path: &str,
+    pattern: &str,
+    want_dirs: bool,
+    case_insensitive: bool,
+    max_depth: Option<usize>,
+) -> Vec<String> {
+    let mut builder = WalkBuilder::new(path);
+    builder
+        .hidden(false) // include dotfiles, like `find`
+        .ignore(false) // don't honor .ignore files
+        .git_ignore(false) // list gitignored files too, like `find`
+        .git_global(false)
+        .git_exclude(false)
+        .parents(false)
+        .filter_entry(|e| e.file_name() != ".git"); // never descend into .git
+    if let Some(depth) = max_depth {
+        builder.max_depth(Some(depth));
+    }
+
+    let mut files: Vec<String> = Vec::new();
+
+    for entry in builder.build() {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let is_dir = entry.file_type().as_ref().is_some_and(|t| t.is_dir());
+        if want_dirs != is_dir {
+            continue;
+        }
+
+        let entry_path = entry.path();
+        let name = match entry_path.file_name() {
+            Some(n) => n.to_string_lossy(),
+            None => continue,
+        };
+
+        let matches = if case_insensitive {
+            glob_match(&pattern.to_lowercase(), &name.to_lowercase())
+        } else {
+            glob_match(pattern, &name)
+        };
+        if !matches {
+            continue;
+        }
+
+        // Path relative to the search root.
+        let display_path = entry_path
+            .strip_prefix(path)
+            .unwrap_or(entry_path)
+            .to_string_lossy()
+            .to_string();
+
+        if !display_path.is_empty() {
+            files.push(display_path);
+        }
+    }
+
+    files.sort();
+    files
+}
+
 /// Parsed arguments from either native find or TOK find syntax.
 #[derive(Debug)]
 struct FindArgs {
@@ -210,66 +282,13 @@ pub fn run(
 
     let want_dirs = file_type == "d";
 
-    let mut builder = WalkBuilder::new(path);
-    builder
-        .hidden(true) // skip hidden files/dirs
-        .git_ignore(true) // respect .gitignore
-        .git_global(true)
-        .git_exclude(true);
-    if let Some(depth) = max_depth {
-        builder.max_depth(Some(depth));
-    }
-    let walker = builder.build();
-
-    let mut files: Vec<String> = Vec::new();
-
-    for entry in walker {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let ft = entry.file_type();
-        let is_dir = ft.as_ref().is_some_and(|t| t.is_dir());
-
-        // Filter by type
-        if want_dirs && !is_dir {
-            continue;
-        }
-        if !want_dirs && is_dir {
-            continue;
-        }
-
-        let entry_path = entry.path();
-
-        // Get filename for glob matching
-        let name = match entry_path.file_name() {
-            Some(n) => n.to_string_lossy(),
-            None => continue,
-        };
-
-        let matches = if case_insensitive {
-            glob_match(&effective_pattern.to_lowercase(), &name.to_lowercase())
-        } else {
-            glob_match(effective_pattern, &name)
-        };
-        if !matches {
-            continue;
-        }
-
-        // Store path relative to search root
-        let display_path = entry_path
-            .strip_prefix(path)
-            .unwrap_or(entry_path)
-            .to_string_lossy()
-            .to_string();
-
-        if !display_path.is_empty() {
-            files.push(display_path);
-        }
-    }
-
-    files.sort();
+    let files = collect_matches(
+        path,
+        effective_pattern,
+        want_dirs,
+        case_insensitive,
+        max_depth,
+    );
 
     let raw_output = files.join("\n");
 
@@ -590,11 +609,64 @@ mod tests {
     }
 
     #[test]
-    fn find_gitignored_excluded() {
-        // target/ is in .gitignore — files inside should not appear
+    fn find_runs_without_error() {
         let result = run("*", ".", 1000, None, "f", false, 0);
         assert!(result.is_ok());
-        // We can't easily capture stdout in unit tests, but at least
-        // verify it runs without error. The smoke tests verify content.
+    }
+
+    // --- collect_matches: find-faithful inclusion of hidden + ignored files ---
+
+    use std::fs;
+    use std::io::Write;
+
+    /// Build a temp tree with a dotfile, a gitignored file, a `.git` dir, and a
+    /// normal file, then return (tempdir, matches) for `pattern`.
+    fn tree_matches(pattern: &str) -> (tempfile::TempDir, Vec<String>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        fs::write(root.join("visible.rs"), "x").unwrap();
+        fs::write(root.join(".hidden.rs"), "x").unwrap(); // dotfile
+        fs::write(root.join("ignored.rs"), "x").unwrap();
+        let mut gi = fs::File::create(root.join(".gitignore")).unwrap();
+        writeln!(gi, "ignored.rs").unwrap();
+        // A .git dir with an object file that must never surface.
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join(".git").join("config.rs"), "x").unwrap();
+
+        let matches = collect_matches(&root.to_string_lossy(), pattern, false, false, None);
+        (dir, matches)
+    }
+
+    #[test]
+    fn collect_includes_hidden_files() {
+        let (_dir, matches) = tree_matches("*.rs");
+        assert!(
+            matches.iter().any(|f| f == ".hidden.rs"),
+            "dotfiles must be included like `find`, got {matches:?}"
+        );
+    }
+
+    #[test]
+    fn collect_includes_gitignored_files() {
+        let (_dir, matches) = tree_matches("*.rs");
+        assert!(
+            matches.iter().any(|f| f == "ignored.rs"),
+            "gitignored files must be included like `find`, got {matches:?}"
+        );
+    }
+
+    #[test]
+    fn collect_prunes_dot_git_directory() {
+        let (_dir, matches) = tree_matches("*.rs");
+        assert!(
+            !matches.iter().any(|f| f.contains(".git/")),
+            ".git internals must never surface, got {matches:?}"
+        );
+    }
+
+    #[test]
+    fn collect_still_matches_the_normal_file() {
+        let (_dir, matches) = tree_matches("*.rs");
+        assert!(matches.iter().any(|f| f == "visible.rs"));
     }
 }
