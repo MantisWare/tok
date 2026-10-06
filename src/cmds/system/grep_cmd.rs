@@ -4,9 +4,17 @@ use crate::core::config;
 use crate::core::tracking;
 use crate::core::utils::{exit_code_from_output, resolved_command};
 use anyhow::{Context, Result};
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
 use std::process::Stdio;
+
+lazy_static! {
+    /// A ripgrep/grep match line is `path:linenum:content` (filename forced by
+    /// -H). Context lines emitted by -A/-B/-C use dash separators instead, so
+    /// this anchor distinguishes real matches from context when counting.
+    static ref MATCH_LINE_RE: Regex = Regex::new(r"^[^:]+:\d+:").unwrap();
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -86,6 +94,23 @@ pub fn run(
         return Ok(exit_code);
     }
 
+    // Context mode (-A/-B/-C): the group-by-file renderer can't represent
+    // interleaved context lines, and their dash separators can't be re-split
+    // reliably (paths and code both contain '-'). When the user explicitly
+    // asks for context, preserve ripgrep's output faithfully — only capping
+    // pathologically long lines — rather than risk dropping or mangling it.
+    if has_context_flags(extra_args) {
+        let tok_output = render_with_context(&stdout, max_line_len);
+        print!("{}", tok_output);
+        timer.track(
+            &format!("grep -rn '{}' {}", pattern, path),
+            "tok grep",
+            &raw_output,
+            &tok_output,
+        );
+        return Ok(exit_code);
+    }
+
     let mut by_file: HashMap<String, Vec<(usize, String)>> = HashMap::new();
     let mut total = 0;
 
@@ -149,6 +174,51 @@ pub fn run(
     );
 
     Ok(exit_code)
+}
+
+/// Is `arg` a grep/rg context flag (-A/-B/-C, with or without an attached
+/// count, or their long forms)? Presence of any means the user wants
+/// surrounding lines, so TOK must not strip them.
+fn is_context_flag(arg: &str) -> bool {
+    matches!(arg, "-A" | "-B" | "-C")
+        || arg.starts_with("--after-context")
+        || arg.starts_with("--before-context")
+        || arg.starts_with("--context")
+        || (arg.len() > 2
+            && matches!(&arg[..2], "-A" | "-B" | "-C")
+            && arg[2..].chars().all(|c| c.is_ascii_digit()))
+}
+
+fn has_context_flags(extra_args: &[String]) -> bool {
+    extra_args.iter().any(|a| is_context_flag(a))
+}
+
+/// Render ripgrep output verbatim for context mode: match and context lines are
+/// kept in order, group separators (`--`) preserved, and only over-long lines
+/// are capped so a minified bundle line can't blow up the context window.
+fn render_with_context(stdout: &str, max_line_len: usize) -> String {
+    // Give the leading `path:line:` prefix room so normal code lines survive.
+    let cap = max_line_len.max(160);
+    let mut matches = 0;
+    let mut body = String::new();
+    for line in stdout.lines() {
+        if line != "--" && MATCH_LINE_RE.is_match(line) {
+            matches += 1;
+        }
+        body.push_str(&truncate_display(line, cap));
+        body.push('\n');
+    }
+    format!("{} matches (with context):\n\n{}", matches, body)
+}
+
+/// Char-boundary-safe truncation that preserves leading indentation (unlike
+/// `clean_line`, which trims it) — indentation is meaningful in code context.
+fn truncate_display(line: &str, max: usize) -> String {
+    if line.chars().count() <= max {
+        return line.to_string();
+    }
+    let head: String = line.chars().take(max.saturating_sub(1)).collect();
+    format!("{head}…")
 }
 
 /// Parse one `rg`/`grep -nH` output line of the form `file:line:content`.
@@ -282,6 +352,51 @@ mod tests {
     #[test]
     fn parse_unparseable_line_is_skipped() {
         assert_eq!(parse_match_line("no-colons-here", "."), None);
+    }
+
+    // --- context mode (-A/-B/-C) ---
+
+    #[test]
+    fn detects_context_flags() {
+        assert!(is_context_flag("-A"));
+        assert!(is_context_flag("-C3"));
+        assert!(is_context_flag("-B2"));
+        assert!(is_context_flag("--context=2"));
+        assert!(is_context_flag("--after-context"));
+        assert!(!is_context_flag("-i"));
+        assert!(!is_context_flag("-A3x")); // not all digits
+        assert!(!is_context_flag("--color"));
+        assert!(has_context_flags(&["-i".to_string(), "-A".to_string(), "3".to_string()]));
+        assert!(!has_context_flags(&["-i".to_string()]));
+    }
+
+    // Regression: context lines (dash separators) and group separators were
+    // being dropped by the colon parser. In context mode they are preserved.
+    #[test]
+    fn context_lines_are_preserved() {
+        let rg_out = "\
+src/a.rs-10-fn before() {}
+src/a.rs:11:    let target = 1;
+src/a.rs-12-fn after() {}
+--
+src/b.rs:5:    let target = 2;
+";
+        let rendered = render_with_context(rg_out, 200);
+        assert!(rendered.starts_with("2 matches (with context):"));
+        assert!(rendered.contains("fn before() {}"), "before-context dropped");
+        assert!(rendered.contains("fn after() {}"), "after-context dropped");
+        assert!(rendered.contains("--"), "group separator dropped");
+        assert!(rendered.contains("let target = 1;"));
+        assert!(rendered.contains("let target = 2;"));
+    }
+
+    #[test]
+    fn context_mode_caps_long_lines_on_char_boundaries() {
+        let long = format!("src/a.rs:1:{}", "é".repeat(5_000));
+        let rendered = render_with_context(&long, 80);
+        // Must not panic on multi-byte boundary and must shrink the output.
+        assert!(rendered.chars().count() < 500);
+        assert!(rendered.contains('…'));
     }
 
     #[test]
