@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Pre-commit hook: auto-increment patch version in Cargo.toml and .release-please-manifest.json
+# Pre-commit hook: auto-increment patch version in Cargo.toml,
+# .release-please-manifest.json, and Cargo.lock
 # Install: git config core.hooksPath .githooks
 
 set -euo pipefail
 
 CARGO_TOML="Cargo.toml"
 MANIFEST=".release-please-manifest.json"
+CARGO_LOCK="Cargo.lock"
 
 if [ ! -f "$CARGO_TOML" ]; then
   exit 0
@@ -37,7 +39,22 @@ if [ -f "$MANIFEST" ]; then
   ' "$MANIFEST" > "${MANIFEST}.tmp" && mv "${MANIFEST}.tmp" "$MANIFEST"
 fi
 
+# Keep Cargo.lock in step with the bump. Without this the lockfile's `tok`
+# entry lags one version behind every commit, so the next build re-dirties it.
+# Update only the version line inside the `name = "tok"` package block.
+if [ -f "$CARGO_LOCK" ]; then
+  awk -v new="$NEW_VERSION" '
+    /^name = "tok"$/ { intok = 1 }
+    intok && /^version = "/ {
+      sub(/version = "[^"]*"/, "version = \"" new "\"")
+      intok = 0
+    }
+    { print }
+  ' "$CARGO_LOCK" > "${CARGO_LOCK}.tmp" && mv "${CARGO_LOCK}.tmp" "$CARGO_LOCK"
+fi
+
 git add "$CARGO_TOML"
 [ -f "$MANIFEST" ] && git add "$MANIFEST"
+[ -f "$CARGO_LOCK" ] && git add "$CARGO_LOCK"
 
 echo "pre-commit: version bumped ${CURRENT_VERSION} → ${NEW_VERSION}"
