@@ -619,7 +619,8 @@ mod tests {
             .expect("resolved_command('cargo') should execute");
         assert!(
             output.status.success(),
-            "cargo --version should succeed via resolved_command"
+            "cargo --version should succeed via resolved_command\nstderr: {}",
+            String::from_utf8_lossy(&output.stderr),
         );
     }
 

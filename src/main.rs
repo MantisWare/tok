@@ -5,10 +5,21 @@ mod cmds;
 mod core;
 mod discover;
 mod forgemap;
+// Parts of the graph and query layers are consumed by the markdown, MCP, and
+// multi-scope phases rather than by the CLI, so a plain build sees them as
+// unused. Dropping them would mean deleting working, tested code and writing it
+// again later.
+#[allow(dead_code)]
+mod graph;
 mod hooks;
 mod learn;
+#[allow(dead_code)]
+mod markdown;
+mod mcp;
 mod mem;
 mod parser;
+#[allow(dead_code)]
+mod query;
 #[allow(dead_code)]
 mod security;
 
@@ -371,6 +382,10 @@ pub(crate) enum Commands {
         /// Install for ALL supported agents at once (global + project-local)
         #[arg(long)]
         all: bool,
+
+        /// Skip all code-graph wiring: graph hooks, MCP registration, instructions
+        #[arg(long = "no-graph")]
+        no_graph: bool,
     },
 
     /// wget — skip the progress-bar light show
@@ -770,6 +785,18 @@ pub(crate) enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         filter: Vec<String>,
     },
+
+    /// Serve the code graph to agents over MCP (JSON-RPC on stdin/stdout)
+    ///
+    /// Not meant to be run by hand: an MCP client starts it and speaks the
+    /// protocol on stdout, so anything else printed there breaks the session.
+    Mcp {
+        /// Repository to serve (default: the working directory)
+        ///
+        /// Clients that launch the server from their own install directory
+        /// rather than the project need this to find the graph.
+        dir: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -813,6 +840,26 @@ pub(crate) enum HookCommands {
         #[arg(long)]
         stdin: bool,
     },
+    /// Emit code-graph orientation for sessionStart (JSON on stdout)
+    #[command(name = "graph-session")]
+    GraphSession {
+        #[arg(long, default_value = "auto")]
+        agent: String,
+        /// Emit JSON `{"additional_context": "..."}`
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Refresh the code graph after a file edit (silent, best-effort)
+    #[command(name = "graph-postedit")]
+    GraphPostedit {
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Regenerate the committed markdown under .tok/map/
+    #[command(name = "graph-sync")]
+    GraphSync,
 }
 
 #[derive(Subcommand)]
@@ -834,6 +881,10 @@ pub(crate) enum MemCommands {
         /// Wipe all existing data for this repo before indexing
         #[arg(long)]
         clear: bool,
+        /// Also send source to your configured LLM for summaries. Off by
+        /// default: indexing is otherwise offline, deterministic, and free.
+        #[arg(long)]
+        deep: bool,
     },
 
     /// Full-text search across indexed symbols (BM25 ranking)
@@ -1038,6 +1089,87 @@ pub(crate) enum MemCommands {
         /// Minimum complexity to report
         #[arg(long, default_value = "5")]
         min_complexity: u32,
+    },
+
+    /// Ranked retrieval — the symbols worth reading to answer a question
+    Ask {
+        /// What you want to understand, in plain words
+        query: String,
+        /// Path to the indexed repository
+        #[arg(long, default_value = ".")]
+        path: String,
+        /// Max results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Skip the graph walk and rank on text alone
+        #[arg(long)]
+        lexical: bool,
+        /// Narrow to a scope, a child repository, or a path prefix
+        #[arg(long = "in", alias = "in-path", value_name = "SCOPE")]
+        in_path: Option<String>,
+        /// Drop test symbols instead of merely ranking them lower
+        #[arg(long)]
+        no_tests: bool,
+    },
+
+    /// File outline — signatures without bodies
+    Skeleton {
+        /// Repo-relative file to outline; omit to list indexed files
+        file: Option<String>,
+        /// Path to the indexed repository
+        #[arg(long, default_value = ".")]
+        path: String,
+    },
+
+    /// Search source, grouped by the symbol that contains each match
+    Grep {
+        /// Text to find (literal unless --regex)
+        pattern: String,
+        /// Path to the indexed repository
+        #[arg(long, default_value = ".")]
+        path: String,
+        /// Treat the pattern as a regular expression
+        #[arg(long)]
+        regex: bool,
+        /// Match case exactly
+        #[arg(long)]
+        case_sensitive: bool,
+        /// Narrow to a scope or a path prefix
+        #[arg(long = "in", alias = "in-path", value_name = "SCOPE")]
+        in_path: Option<String>,
+        /// Max matches
+        #[arg(short, long, default_value = "100")]
+        limit: usize,
+    },
+
+    /// Repository overview — layout, hubs, and entry points
+    Map {
+        /// Path to the indexed repository
+        #[arg(long, default_value = ".")]
+        path: String,
+        /// Max directories to list
+        #[arg(long, default_value = "15")]
+        max_dirs: usize,
+        /// Max hub symbols to list
+        #[arg(long, default_value = "15")]
+        max_hubs: usize,
+    },
+
+    /// Write committed markdown wiring cards under .tok/map/
+    Cards {
+        /// Path to the indexed repository
+        #[arg(long, default_value = ".")]
+        path: String,
+    },
+
+    /// Report whether the committed markdown still matches the code
+    Check {
+        /// Path to the indexed repository
+        #[arg(long, default_value = ".")]
+        path: String,
+        /// Exit nonzero when drift is found, for use in CI
+        #[arg(long)]
+        strict: bool,
     },
 }
 
@@ -2453,11 +2585,47 @@ const MANUAL: &[ManSection] = &[
         ],
     },
     ManSection {
+        heading: "Code Graph Retrieval — tok mem",
+        entries: &[
+            (
+                "tok mem ask <question>",
+                "Rank the symbols that answer it, with source inlined",
+            ),
+            (
+                "tok mem skeleton <file>",
+                "Every signature in a file, no bodies",
+            ),
+            (
+                "tok mem grep <pattern>",
+                "Search text, grouped by the symbol containing each hit",
+            ),
+            ("tok mem map", "Repo overview: layout, hubs, entry points"),
+            (
+                "tok mem cards",
+                "Write the committed markdown under .tok/map/",
+            ),
+            ("tok mem check", "Report drift between .tok/map/ and code"),
+            (
+                "  --in <path>",
+                "Restrict ask/grep to one scope or sub-project",
+            ),
+            (
+                "  --lexical",
+                "ask: text matching only, skip the graph walk",
+            ),
+            ("  --strict", "check: exit 1 when anything has drifted"),
+        ],
+    },
+    ManSection {
         heading: "Code Intelligence — tok mem",
         entries: &[
             (
                 "tok mem index <dir>",
                 "Index symbols, relationships, and structure",
+            ),
+            (
+                "tok mem index --deep",
+                "Also enrich the graph with LLM summaries (opt-in, costs money)",
             ),
             (
                 "tok mem search <query>",
@@ -2660,6 +2828,11 @@ const MANUAL: &[ManSection] = &[
             ("tok init -g --opencode", "Install hooks for OpenCode"),
             ("tok init --copilot", "Install hooks for GitHub Copilot"),
             ("tok init --all", "Install hooks for ALL agents at once"),
+            (
+                "tok init --no-graph",
+                "Skip the code-graph wiring (hooks, MCP, instructions)",
+            ),
+            ("tok init --uninstall", "Remove everything init installed"),
             ("tok config", "View or scaffold tok config"),
             ("tok verify", "Sanity-check hooks + run TOML filter tests"),
             ("tok update", "Update tok to the latest GitHub release"),
@@ -2688,6 +2861,51 @@ const MANUAL: &[ManSection] = &[
                 "tok hook-audit",
                 "Hook rewrite audit (set TOK_HOOK_AUDIT=1 first)",
             ),
+            (
+                "tok hook graph-session",
+                "SessionStart — orient the agent in the code graph",
+            ),
+            (
+                "tok hook graph-postedit",
+                "PostToolUse — refresh the graph after an edit",
+            ),
+            (
+                "tok hook graph-sync",
+                "Regenerate .tok/map/ cards and report drift",
+            ),
+            (
+                "tok mcp [dir]",
+                "Serve the graph to agents over MCP (JSON-RPC on stdio)",
+            ),
+        ],
+    },
+    ManSection {
+        heading: "Environment",
+        entries: &[
+            ("TOK_DISABLED=1", "Turn off rewriting entirely"),
+            (
+                "TOK_GRAPH_NO_REFRESH=1",
+                "Pin the graph — no auto-refresh on query (CI, benchmarks)",
+            ),
+            (
+                "TOK_GRAPH_REFRESH=hash",
+                "Detect edits by content hash rather than size+mtime",
+            ),
+            (
+                "TOK_GRAPH_PROVIDER",
+                "index --deep: openai | anthropic | ollama | openai-compatible",
+            ),
+            ("TOK_GRAPH_MODEL", "index --deep: model name"),
+            (
+                "TOK_GRAPH_BASE_URL",
+                "index --deep: endpoint for self-hosted",
+            ),
+            (
+                "TOK_GRAPH_API_KEY",
+                "index --deep: key, if not in the config",
+            ),
+            ("TOK_HOOK_AUDIT=1", "Log every hook rewrite decision"),
+            ("TOK_TELEMETRY_DISABLED=1", "Opt out of the daily ping"),
         ],
     },
     ManSection {
@@ -2790,8 +3008,13 @@ fn main() {
 }
 
 fn run_cli() -> Result<i32> {
-    // Fire-and-forget telemetry ping (1/day, non-blocking)
-    core::telemetry::maybe_ping();
+    // Fire-and-forget telemetry ping (1/day, non-blocking). Skipped for the MCP
+    // server, which is a long-lived process whose stdout is a JSON-RPC stream:
+    // there is nothing to gain from a ping and everything to lose if a future
+    // change to it ever writes a line.
+    if !is_mcp_invocation() {
+        core::telemetry::maybe_ping();
+    }
 
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -2809,7 +3032,12 @@ fn run_cli() -> Result<i32> {
 
     // Warn if installed hook is outdated/missing (1/day, non-blocking).
     // Skip for Gain — it shows its own inline hook warning.
-    if !matches!(cli.command, Commands::Gain { .. } | Commands::Update { .. }) {
+    // Skip for Mcp — its stdout is a JSON-RPC stream, and one stray line of
+    // human-readable text in the middle of it disconnects the client.
+    if !matches!(
+        cli.command,
+        Commands::Gain { .. } | Commands::Update { .. } | Commands::Mcp { .. }
+    ) {
         hooks::hook_check::maybe_warn();
         core::update::maybe_warn();
     }
@@ -2822,6 +3050,17 @@ fn run_cli() -> Result<i32> {
     }
 
     cli_dispatch::dispatch(cli)
+}
+
+/// Whether this process was started as the MCP server.
+///
+/// Read from the raw arguments because it has to be answered before Clap parses
+/// them: the telemetry ping fires first, and moving it after the parse would
+/// change when every other command reports.
+fn is_mcp_invocation() -> bool {
+    std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == std::ffi::OsStr::new("mcp"))
 }
 
 /// Returns true for commands that are invoked via the hook pipeline

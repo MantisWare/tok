@@ -2,6 +2,8 @@
 
 pub mod constants;
 pub mod doctor_cmd;
+pub mod graph_hook;
+pub mod graph_wiring;
 pub mod hook_audit_cmd;
 pub mod hook_check;
 pub mod hook_cmd;

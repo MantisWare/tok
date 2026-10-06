@@ -1,0 +1,4 @@
+# Check out every text file with LF on every platform. The snapshot and
+# token-savings tests compare against byte counts, and a CRLF checkout on
+# Windows inflates them (~1 byte per line), which fails those assertions.
+* text=auto eol=lf

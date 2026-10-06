@@ -5,6 +5,7 @@ pub const MEMORY_PROMPT_HOOK_FILE: &str = "tok-memory-prompt.sh";
 pub const MEMORY_EXTRACT_HOOK_FILE: &str = "tok-memory-extract.sh";
 pub const MEMORY_CACHE_PROMPT_HOOK_FILE: &str = "tok-memory-cache-prompt.sh";
 pub const SESSION_START_KEY: &str = "SessionStart";
+pub const POST_TOOL_USE_KEY: &str = "PostToolUse";
 pub const USER_PROMPT_SUBMIT_KEY: &str = "UserPromptSubmit";
 pub const STOP_KEY: &str = "Stop";
 pub const BEFORE_AGENT_KEY: &str = "BeforeAgent";

@@ -7,6 +7,10 @@ on:
 jobs:
   check-target:
     runs-on: ubuntu-latest
+    # The repository default token is read-only; labeling and commenting need
+    # issues: write or the guard 403s before it can say anything.
+    permissions:
+      issues: write
     # Skip develop→master PRs (maintainer releases)
     if: >-
       github.event.pull_request.base.ref == 'master' &&

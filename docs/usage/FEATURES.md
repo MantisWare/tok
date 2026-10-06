@@ -1332,6 +1332,17 @@ enabled = true              # Telemetrie anonyme (1 ping/jour, opt-out possible)
 
 [hooks]
 exclude_commands = []       # Commandes a exclure de la recriture automatique
+
+[graph.llm]
+enabled = false             # Active `tok mem index --deep` (desactive : indexation hors ligne)
+provider = "openai"         # "openai" (tout endpoint compatible) ou "anthropic"
+model = "gpt-4o-mini"
+# base_url = "http://localhost:11434/v1"   # Ollama, Azure, ou un proxy
+# api_key_env = "MY_KEY"    # Defaut : OPENAI_API_KEY / ANTHROPIC_API_KEY
+max_files = 50              # Plafond par execution
+max_symbols = 100
+max_chars = 8000            # Portion de chaque fichier envoyee
+timeout_secs = 30
 ```
 
 ### Variables d'environnement
@@ -1342,6 +1353,12 @@ exclude_commands = []       # Commandes a exclure de la recriture automatique
 | `TOK_TELEMETRY_DISABLED=1` | Desactiver la telemetrie |
 | `TOK_HOOK_AUDIT=1` | Activer l'audit du hook |
 | `SKIP_ENV_VALIDATION=1` | Desactiver la validation d'env (Next.js, etc.) |
+| `TOK_GRAPH_NO_REFRESH=1` | Figer le graphe de code : aucune reconstruction avant une requete |
+| `TOK_GRAPH_REFRESH=hash` | Detecter les modifications par hachage plutot que taille+mtime |
+| `TOK_GRAPH_PROVIDER` | `--deep` : surcharge le fournisseur LLM |
+| `TOK_GRAPH_MODEL` | `--deep` : surcharge le modele |
+| `TOK_GRAPH_BASE_URL` | `--deep` : surcharge l'endpoint |
+| `TOK_GRAPH_API_KEY` | `--deep` : cle API, si absente de la configuration |
 
 ---
 

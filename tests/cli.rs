@@ -113,6 +113,13 @@ mod test_learn;
 mod test_log;
 #[path = "cli/test_ls.rs"]
 mod test_ls;
+#[path = "cli/test_mem_baseline.rs"]
+mod test_mem_baseline;
+
+#[path = "cli/test_mem_retrieval.rs"]
+mod test_mem_retrieval;
+#[path = "cli/test_mem_scopes.rs"]
+mod test_mem_scopes;
 #[path = "cli/test_npm.rs"]
 mod test_npm;
 #[path = "cli/test_pnpm.rs"]

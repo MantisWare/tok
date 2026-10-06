@@ -44,7 +44,11 @@ fn get_memory_db_path() -> Result<std::path::PathBuf> {
 }
 
 /// Create tables and indexes if they don't exist.
-fn migrate(conn: &Connection) -> Result<()> {
+///
+/// Visible to the crate so the graph projection can build a schema-complete
+/// in-memory database in its tests, rather than duplicating the schema and
+/// letting the copy drift from this one.
+pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS repositories (
             repo_id   TEXT PRIMARY KEY,
@@ -65,7 +69,8 @@ fn migrate(conn: &Connection) -> Result<()> {
             signature  TEXT NOT NULL DEFAULT '',
             doc_comment TEXT NOT NULL DEFAULT '',
             branch     TEXT NOT NULL DEFAULT 'main',
-            indexed_at TEXT NOT NULL DEFAULT ''
+            indexed_at TEXT NOT NULL DEFAULT '',
+            graph_id   TEXT NOT NULL DEFAULT ''
         );
 
         CREATE INDEX IF NOT EXISTS idx_symbols_repo   ON symbols(repo_id);
@@ -116,7 +121,70 @@ fn migrate(conn: &Connection) -> Result<()> {
     )
     .context("Failed to create FTS5 table")?;
 
+    add_missing_columns(conn)?;
+
     Ok(())
+}
+
+/// Bring an existing database up to the current column set.
+///
+/// The schema above is `CREATE TABLE IF NOT EXISTS`, which is a no-op against a
+/// database created by an earlier version — so new columns have to be added
+/// here as well. Every addition must be nullable or carry a default, since
+/// SQLite cannot add a `NOT NULL` column without one.
+fn add_missing_columns(conn: &Connection) -> Result<()> {
+    // `graph_id` links a row to its node in the tree-sitter code graph. It is
+    // *not* the primary key: `symbols.id` keeps its
+    // `sha256(repo_id:file_path:name:kind)[:16]` formula because
+    // `episodes.symbol_id` already references those values, and rewriting them
+    // would orphan every recorded change.
+    //
+    // Empty string means "not linked", matching how the rest of this table
+    // represents absent text rather than introducing NULL handling.
+    add_column_if_missing(conn, "symbols", "graph_id", "TEXT NOT NULL DEFAULT ''")?;
+
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_symbols_graph ON symbols(graph_id);")
+        .context("Failed to create graph_id index")?;
+
+    Ok(())
+}
+
+/// Add a column when absent. Safe to call on every open.
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    if column_exists(conn, table, column)? {
+        return Ok(());
+    }
+
+    // Table and column names are compile-time constants from this module, never
+    // user input, so the format! here cannot be injected into.
+    conn.execute_batch(&format!(
+        "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+    ))
+    .with_context(|| format!("Failed to add {table}.{column}"))?;
+
+    Ok(())
+}
+
+/// Whether `table` already has `column`, via `PRAGMA table_info`.
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table});"))
+        .with_context(|| format!("Failed to inspect {table}"))?;
+
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        // PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 // ── Repository CRUD ──
@@ -530,6 +598,149 @@ mod tests {
         let conn = in_memory_db();
         migrate(&conn).unwrap();
         migrate(&conn).unwrap();
+    }
+
+    /// The upgrade path that matters: a database created before the code graph
+    /// must gain `graph_id` without losing rows.
+    #[test]
+    fn migrate_adds_graph_id_to_a_pre_existing_database() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // The `symbols` table exactly as an older TOK created it.
+        conn.execute_batch(
+            "CREATE TABLE repositories (
+                repo_id TEXT PRIMARY KEY, path TEXT NOT NULL,
+                branch TEXT NOT NULL DEFAULT 'main',
+                last_indexed_at TEXT NOT NULL DEFAULT '',
+                last_episode_id TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE symbols (
+                id TEXT PRIMARY KEY, repo_id TEXT NOT NULL, name TEXT NOT NULL,
+                kind TEXT NOT NULL, file_path TEXT NOT NULL,
+                line_start INTEGER NOT NULL DEFAULT 0,
+                line_end INTEGER NOT NULL DEFAULT 0,
+                signature TEXT NOT NULL DEFAULT '',
+                doc_comment TEXT NOT NULL DEFAULT '',
+                branch TEXT NOT NULL DEFAULT 'main',
+                indexed_at TEXT NOT NULL DEFAULT ''
+             );
+             INSERT INTO repositories (repo_id, path) VALUES ('r', '/tmp/r');
+             INSERT INTO symbols (id, repo_id, name, kind, file_path)
+                VALUES ('legacy-id', 'r', 'oldFn', 'Function', 'a.ts');",
+        )
+        .unwrap();
+
+        assert!(!column_exists(&conn, "symbols", "graph_id").unwrap());
+
+        migrate(&conn).unwrap();
+
+        assert!(column_exists(&conn, "symbols", "graph_id").unwrap());
+
+        // The pre-existing row survives, keeps its id, and defaults to unlinked.
+        let (id, graph_id): (String, String) = conn
+            .query_row(
+                "SELECT id, graph_id FROM symbols WHERE name = 'oldFn'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(id, "legacy-id", "symbol ids must not be rewritten");
+        assert_eq!(graph_id, "", "unlinked rows use the empty-string sentinel");
+    }
+
+    /// `episodes.symbol_id` holds a bare string, so nothing at the database
+    /// level would complain if the migration rewrote symbol ids — the join
+    /// would just start returning nothing. This walks that join.
+    #[test]
+    fn episodes_still_resolve_to_their_symbols_after_the_upgrade() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        conn.execute_batch(
+            "CREATE TABLE repositories (
+                repo_id TEXT PRIMARY KEY, path TEXT NOT NULL,
+                branch TEXT NOT NULL DEFAULT 'main',
+                last_indexed_at TEXT NOT NULL DEFAULT '',
+                last_episode_id TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE symbols (
+                id TEXT PRIMARY KEY, repo_id TEXT NOT NULL, name TEXT NOT NULL,
+                kind TEXT NOT NULL, file_path TEXT NOT NULL,
+                line_start INTEGER NOT NULL DEFAULT 0,
+                line_end INTEGER NOT NULL DEFAULT 0,
+                signature TEXT NOT NULL DEFAULT '',
+                doc_comment TEXT NOT NULL DEFAULT '',
+                branch TEXT NOT NULL DEFAULT 'main',
+                indexed_at TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE episodes (
+                id TEXT PRIMARY KEY, repo_id TEXT NOT NULL,
+                symbol_id TEXT NOT NULL, change_type TEXT NOT NULL,
+                commit_hash TEXT NOT NULL DEFAULT '',
+                timestamp TEXT NOT NULL DEFAULT '',
+                diff_summary TEXT NOT NULL DEFAULT '',
+                branch TEXT NOT NULL DEFAULT 'main'
+             );
+             INSERT INTO repositories (repo_id, path) VALUES ('r', '/tmp/r');
+             INSERT INTO symbols (id, repo_id, name, kind, file_path)
+                VALUES ('legacy-id', 'r', 'oldFn', 'Function', 'a.ts');
+             INSERT INTO episodes (id, repo_id, symbol_id, change_type, diff_summary)
+                VALUES ('e1', 'r', 'legacy-id', 'modified', 'renamed for clarity');",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let name: String = conn
+            .query_row(
+                "SELECT s.name FROM episodes e
+                 JOIN symbols s ON s.id = e.symbol_id
+                 WHERE e.id = 'e1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("the episode lost its symbol");
+        assert_eq!(name, "oldFn");
+    }
+
+    #[test]
+    fn adding_a_column_twice_is_a_no_op() {
+        let conn = in_memory_db();
+        add_missing_columns(&conn).unwrap();
+        add_missing_columns(&conn).unwrap();
+        assert!(column_exists(&conn, "symbols", "graph_id").unwrap());
+    }
+
+    #[test]
+    fn column_exists_reports_absent_columns() {
+        let conn = in_memory_db();
+        assert!(column_exists(&conn, "symbols", "name").unwrap());
+        assert!(!column_exists(&conn, "symbols", "no_such_column").unwrap());
+    }
+
+    /// Pins the on-disk schema. `episodes.symbol_id` references the symbol id
+    /// formula, and agents read `symbols_fts` through `tok mem search`, so any
+    /// change here has to be additive and deliberate.
+    #[test]
+    fn schema_baseline() {
+        let conn = in_memory_db();
+        let mut stmt = conn
+            .prepare(
+                "SELECT type, name, COALESCE(sql, '') FROM sqlite_master \
+                 WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+            )
+            .unwrap();
+        let rows: Vec<String> = stmt
+            .query_map([], |row| {
+                let kind: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let sql: String = row.get(2)?;
+                Ok(format!("[{kind}] {name}\n{}\n", sql.trim()))
+            })
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+
+        insta::assert_snapshot!("mem_db_schema", rows.join("\n"));
     }
 
     #[test]

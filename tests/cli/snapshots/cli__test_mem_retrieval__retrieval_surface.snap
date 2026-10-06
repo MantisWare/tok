@@ -1,0 +1,243 @@
+---
+source: tests/cli/test_mem_retrieval.rs
+expression: report
+---
+=== ask-cache ===
+20 symbols for cache:
+
+  Cache                        [class] python/cache.py:15
+    class Cache(BaseCache):
+  Cache                        [class] ts/cache.ts:16
+    class Cache extends BaseCache implements Storable
+  BaseCache                    [class] python/cache.py:8
+    class BaseCache:
+  build_cache                  [function] python/cache.py:30
+    def build_cache():
+  Cache                        [struct] go/cache.go:16
+    Cache struct
+  BaseCache                    [class] ts/cache.ts:10
+    abstract class BaseCache
+  cache.ts                     [file] ts/cache.ts:1
+  cache.py                     [file] python/cache.py:1
+  WarmCache                    [function] go/cache.go:37
+    func WarmCache(c *Cache, keys []string) int
+  cache.go                     [file] go/cache.go:1
+  buildCache                   [function] ts/cache.ts:34
+    function buildCache(): Cache
+  warm_cache                   [function] python/cache.py:34
+    def warm_cache(cache, keys):
+  BuildCache                   [function] go/cache.go:33
+    func BuildCache() *Cache
+  Put                          [method] go/cache.go:29
+    func (c *Cache) Put(entry Entry)
+  CacheKey                     [type] ts/cache.ts:8
+    type CacheKey = string;
+  warmCache                    [function] ts/cache.ts:38
+    warmCache = (cache: Cache, keys: CacheKey[]): number =>
+  Get                          [method] go/cache.go:24
+    func (c *Cache) Get(key string) (Entry, bool)
+  Label                        [method] go/cache.go:20
+    func (c *Cache) Label() string
+  get                          [method] ts/cache.ts:24
+    get(key: CacheKey): Storable | undefined
+  count                        [constant] ts/cache.ts:39
+    count = 0
+
+431 tokens vs ~602 reading 3 files (28% saved)
+
+=== ask-cache-lexical ===
+20 symbols for cache:
+
+  Cache                        [struct] go/cache.go:16
+    Cache struct
+  Cache                        [class] python/cache.py:15
+    class Cache(BaseCache):
+  cache.go                     [file] go/cache.go:1
+  cache.py                     [file] python/cache.py:1
+  cache.ts                     [file] ts/cache.ts:1
+  build_cache                  [function] python/cache.py:30
+    def build_cache():
+  warm_cache                   [function] python/cache.py:34
+    def warm_cache(cache, keys):
+  Cache                        [class] ts/cache.ts:16
+    class Cache extends BaseCache implements Storable
+  BuildCache                   [function] go/cache.go:33
+    func BuildCache() *Cache
+  BaseCache                    [class] python/cache.py:8
+    class BaseCache:
+  buildCache                   [function] ts/cache.ts:34
+    function buildCache(): Cache
+  BaseCache                    [class] ts/cache.ts:10
+    abstract class BaseCache
+  CacheKey                     [type] ts/cache.ts:8
+    type CacheKey = string;
+  WarmCache                    [function] go/cache.go:37
+    func WarmCache(c *Cache, keys []string) int
+  warmCache                    [function] ts/cache.ts:38
+    warmCache = (cache: Cache, keys: CacheKey[]): number =>
+  Label                        [method] go/cache.go:20
+    func (c *Cache) Label() string
+  Put                          [method] go/cache.go:29
+    func (c *Cache) Put(entry Entry)
+  get                          [method] ts/cache.ts:24
+    get(key: CacheKey): Storable | undefined
+  Get                          [method] go/cache.go:24
+    func (c *Cache) Get(key string) (Entry, bool)
+  count                        [constant] ts/cache.ts:39
+    count = 0
+
+431 tokens vs ~602 reading 3 files (28% saved)
+
+=== ask-normalize ===
+4 symbols for normalize:
+
+  normalize                    [function] python/util.py:4
+    def normalize(raw):
+  normalize                    [function] ts/util.ts:1
+    function normalize(raw: string): string
+  normalize                    [function] go/cache.go:48
+    func normalize(raw string) string
+  normalize                    [function] rust/lib.rs:60
+    pub fn normalize(raw: &str) -> String
+
+101 tokens vs ~585 reading 4 files (83% saved)
+
+=== ask-limit-2 ===
+2 symbols for cache:
+
+  Cache                        [class] python/cache.py:15
+    class Cache(BaseCache):
+  Cache                        [class] ts/cache.ts:16
+    class Cache extends BaseCache implements Storable
+
+54 tokens vs ~404 reading 2 files (87% saved)
+
+=== skeleton ===
+ts/cache.ts (10 symbols):
+
+interface Storable  (3)
+type CacheKey = string;  (8)
+abstract class BaseCache  (10)
+class Cache extends BaseCache implements Storable  (16)
+  label(): string  (20)
+  get(key: CacheKey): Storable | undefined  (24)
+  put(entry: Storable): void  (28)
+function buildCache(): Cache  (34)
+warmCache = (cache: Cache, keys: CacheKey[]): number =>  (38)
+count = 0  (39)
+
+97 tokens vs ~224 reading 1 file (57% saved)
+
+=== grep ===
+32 matches in 20 locations:
+
+go/cache.go [file scope]
+      1  package cache
+
+BuildCache [function] go/cache.go:33-35
+     33  func BuildCache() *Cache {
+     34  	return &Cache{entries: make(map[string]Entry)}
+
+Cache [struct] go/cache.go:16-18
+     16  type Cache struct {
+
+Get [method] go/cache.go:24-27
+     24  func (c *Cache) Get(key string) (Entry, bool) {
+
+Label [method] go/cache.go:20-22
+     20  func (c *Cache) Label() string {
+     21  	return "cache"
+
+Put [method] go/cache.go:29-31
+     29  func (c *Cache) Put(entry Entry) {
+
+WarmCache [function] go/cache.go:37-46
+     37  func WarmCache(c *Cache, keys []string) int {
+
+BaseCache [class] python/cache.py:8-12
+      8  class BaseCache:
+      9      """Shared cache behaviour."""
+
+Cache [class] python/cache.py:15-27
+     15  class Cache(BaseCache):
+     16      """An in-memory cache."""
+
+build_cache [function] python/cache.py:30-31
+     30  def build_cache():
+     31      return Cache()
+
+warm_cache [function] python/cache.py:34-40
+     34  def warm_cache(cache, keys):
+     37          if cache.get(key) is None:
+     38              cache.put(key, 0)
+
+rust/lib.rs [file scope]
+      9  /// A single cache entry.
+
+warm_cache [function] rust/lib.rs:45-57
+     45  pub fn warm_cache(store: &mut MemoryStore, keys: &[String]) -> usize {
+
+BaseCache [class] ts/cache.ts:10-14
+     10  export abstract class BaseCache {
+     11    protected entries: Map<CacheKey, Storable> = new Map();
+
+Cache [class] ts/cache.ts:16-32
+     16  export class Cache extends BaseCache implements Storable {
+     17    key = "cache";
+
+CacheKey [type] ts/cache.ts:8-8
+      8  export type CacheKey = string;
+
+buildCache [function] ts/cache.ts:34-36
+     34  export function buildCache(): Cache {
+     35    return new Cache();
+
+get [method] ts/cache.ts:24-26
+     24    get(key: CacheKey): Storable | undefined {
+
+label [method] ts/cache.ts:20-22
+     21      return "cache";
+
+warmCache [function] ts/cache.ts:38-47
+     38  export const warmCache = (cache: Cache, keys: CacheKey[]): number => {
+     41      if (cache.get(key) === undefined) {
+     42        cache.put({ key, hits: 0 });
+
+533 tokens vs ~900 reading 4 files (41% saved)
+
+=== map ===
+6 files, 46 symbols, 65 relationships
+python 2  typescript 2  go 1  rust 1
+
+Layout
+  rust                                  1 files    14 symbols  rust
+  ts                                    2 files    12 symbols  typescript
+  python                                2 files    10 symbols  python
+  go                                    1 files    10 symbols  go
+
+Most depended upon
+     4 normalize                    python/util.py:4-5
+     4 normalize                    ts/util.ts:1-3
+     2 normalize                    go/cache.go:48-50
+     1 Get                          go/cache.go:24-27
+     1 Put                          go/cache.go:29-31
+     1 BaseCache                    python/cache.py:8-12
+     1 Cache                        python/cache.py:15-27
+     1 Store                        rust/lib.rs:20-23
+     1 BaseCache                    ts/cache.ts:10-14
+     1 Cache                        ts/cache.ts:16-32
+     1 Storable                     ts/cache.ts:3-6
+
+Entry points
+  BuildCache                   go/cache.go:33-35
+  Cache                        go/cache.go:16-18
+  Entry                        go/cache.go:11-14
+  Label                        go/cache.go:20-22
+  MaxEntries                   go/cache.go:5-5
+  Storable                     go/cache.go:7-9
+  WarmCache                    go/cache.go:37-46
+  __init__                     python/cache.py:18-20
+  build_cache                  python/cache.py:30-31
+  get                          python/cache.py:22-23
+
+373 tokens vs ~989 reading 6 files (62% saved)

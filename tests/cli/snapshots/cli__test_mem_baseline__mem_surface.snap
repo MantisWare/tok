@@ -1,0 +1,287 @@
+---
+source: tests/cli/test_mem_baseline.rs
+expression: report
+---
+=== index ===
+baseline 6 files scanned, 6 parsed, 45 symbols, 28 edges
+
+=== repos ===
+1 indexed repositories:
+
+  baseline <FIXTURE> — 45 symbols, 28 edges, 6 files
+    last indexed: <TS>
+
+=== status ===
+Repository Status
+  ID:           baseline
+  Path:         <FIXTURE>
+  Branch:       main
+  Last indexed: <TS>
+  Symbols:      45
+  Edges:        28
+  Files:        6
+
+Symbol Breakdown
+  Function     14
+  Method       12
+  Struct       4
+  Class        4
+  Const        3
+  Type         2
+  Interface    2
+  Trait        1
+  Module       1
+  Import       1
+  Enum         1
+
+=== search ===
+20 results for "cache":
+
+  [Struct] Cache go/cache.go:16
+    Cache struct
+  [Function] warm_cache python/cache.py:34
+    def warm_cache(cache, keys):
+  [Class] Cache python/cache.py:15
+    class Cache(BaseCache):
+  [Function] build_cache python/cache.py:30
+    def build_cache():
+  [Class] Cache ts/cache.ts:16
+    class Cache extends BaseCache implements Storable
+  [Function] warm_cache rust/lib.rs:45
+    pub fn warm_cache(store: &mut MemoryStore, keys: &[String]) -> usize
+  [Function] warmCache ts/cache.ts:38
+    warmCache = (cache: Cache, keys: CacheKey[]): number =>
+  [Function] BuildCache go/cache.go:33
+    func BuildCache() *Cache
+  [Function] buildCache ts/cache.ts:34
+    function buildCache(): Cache
+  [Method] Label go/cache.go:20
+    func (c *Cache) Label() string
+  [Method] Put go/cache.go:29
+    func (c *Cache) Put(entry Entry)
+  [Function] WarmCache go/cache.go:37
+    func WarmCache(c *Cache, keys []string) int
+  [Method] Get go/cache.go:24
+    func (c *Cache) Get(key string) (Entry, bool)
+  [Struct] Entry rust/lib.rs:10
+    pub struct Entry
+  [Struct] Entry go/cache.go:11
+    Entry struct
+  [Const] MaxEntries go/cache.go:5
+    MaxEntries = 128
+  [Interface] Storable go/cache.go:7
+    Storable interface
+  [Class] BaseCache python/cache.py:8
+    class BaseCache:
+  [Interface] Storable ts/cache.ts:3
+    interface Storable
+  [Const] count ts/cache.ts:39
+    count = 0
+
+=== search-kind-filter ===
+8 results for "cache":
+
+  [Function] warm_cache python/cache.py:34
+    def warm_cache(cache, keys):
+  [Function] build_cache python/cache.py:30
+    def build_cache():
+  [Function] warm_cache rust/lib.rs:45
+    pub fn warm_cache(store: &mut MemoryStore, keys: &[String]) -> usize
+  [Function] warmCache ts/cache.ts:38
+    warmCache = (cache: Cache, keys: CacheKey[]): number =>
+  [Function] BuildCache go/cache.go:33
+    func BuildCache() *Cache
+  [Function] buildCache ts/cache.ts:34
+    function buildCache(): Cache
+  [Function] WarmCache go/cache.go:37
+    func WarmCache(c *Cache, keys []string) int
+  [Function] normalize go/cache.go:48
+    func normalize(raw string) string
+
+=== find ===
+3 symbols:
+
+  [Struct] Cache go/cache.go:16
+    Cache struct
+  [Class] Cache python/cache.py:15
+    class Cache(BaseCache):
+  [Class] Cache ts/cache.ts:16
+    class Cache extends BaseCache implements Storable
+
+=== find-fuzzy ===
+10 symbols:
+
+  [Struct] Cache go/cache.go:16
+    Cache struct
+  [Class] Cache python/cache.py:15
+    class Cache(BaseCache):
+  [Class] Cache ts/cache.ts:16
+    class Cache extends BaseCache implements Storable
+  [Type] CacheKey ts/cache.ts:8
+    type CacheKey = string;
+  [Function] WarmCache go/cache.go:37
+    func WarmCache(c *Cache, keys []string) int
+  [Class] BaseCache python/cache.py:8
+    class BaseCache:
+  [Class] BaseCache ts/cache.ts:10
+    abstract class BaseCache
+  [Function] warmCache ts/cache.ts:38
+    warmCache = (cache: Cache, keys: CacheKey[]): number =>
+  [Function] BuildCache go/cache.go:33
+    func BuildCache() *Cache
+  [Function] warm_cache python/cache.py:34
+    def warm_cache(cache, keys):
+
+=== context ===
+Symbol
+  Name:      Cache
+  Kind:      Struct
+  File:      go/cache.go:16
+  Signature: Cache struct
+  Repo:      baseline
+  ID:        30c16398ff00e269
+
+=== relations ===
+No find_callers relationships found for "Cache"
+
+=== relations-class-hierarchy ===
+No class_hierarchy relationships found for "Cache"
+
+=== impact ===
+⚡ 5 symbols affected by Cache (direction: both, depth: 3):
+
+  CONTAINS→ Label [Method] (go/cache.go:20)
+  CONTAINS→ Put [Method] (go/cache.go:29)
+  CONTAINS→ Get [Method] (go/cache.go:24)
+    CALLS→ normalize [Function] (go/cache.go:48)
+    CALLS→ WarmCache [Function] (go/cache.go:37)
+
+=== central ===
+20 most central symbols in baseline:
+
+  Cache [Class] in=1 out=5 score=6  (ts/cache.ts)
+  Cache [Class] in=1 out=4 score=5  (python/cache.py)
+  Cache [Struct] in=0 out=3 score=3  (go/cache.go)
+  Get [Method] in=2 out=1 score=3  (go/cache.go)
+  Put [Method] in=2 out=1 score=3  (go/cache.go)
+  normalize [Function] in=3 out=0 score=3  (python/util.py)
+  Store [Trait] in=1 out=2 score=3  (rust/lib.rs)
+  normalize [Function] in=3 out=0 score=3  (ts/util.ts)
+  WarmCache [Function] in=0 out=2 score=2  (go/cache.go)
+  normalize [Function] in=2 out=0 score=2  (go/cache.go)
+  BaseCache [Class] in=1 out=1 score=2  (python/cache.py)
+  get [Method] in=1 out=1 score=2  (python/cache.py)
+  put [Method] in=1 out=1 score=2  (python/cache.py)
+  get [Method] in=1 out=1 score=2  (ts/cache.ts)
+  put [Method] in=1 out=1 score=2  (ts/cache.ts)
+  Label [Method] in=1 out=0 score=1  (go/cache.go)
+  __init__ [Method] in=1 out=0 score=1  (python/cache.py)
+  build_cache [Function] in=0 out=1 score=1  (python/cache.py)
+  label [Method] in=1 out=0 score=1  (python/cache.py)
+  slugify [Function] in=0 out=1 score=1  (python/util.py)
+
+=== bridges ===
+9 bridge symbols in baseline:
+
+  Cache [Class] connects 4 communities (ts/cache.ts)
+  Cache [Class] connects 2 communities (python/cache.py)
+  get [Method] connects 2 communities (python/cache.py)
+  put [Method] connects 2 communities (python/cache.py)
+  slugify [Function] connects 2 communities (python/util.py)
+  buildCache [Function] connects 2 communities (ts/cache.ts)
+  get [Method] connects 2 communities (ts/cache.ts)
+  put [Method] connects 2 communities (ts/cache.ts)
+  slugify [Function] connects 2 communities (ts/util.ts)
+
+=== communities ===
+4 communities in baseline:
+
+  Community 3 (9 members): get, put, label, buildCache, Storable
+  Community 2 (9 members): normalize, slugify, label, put, Cache
+  Community 1 (6 members): normalize, Label, Cache, Put, Get
+  Community 0 (4 members): put, get, Store, MemoryStore
+
+=== dead-code ===
+15 symbols with zero inbound references:
+
+  [Struct] Entry (go/cache.go:11)
+  [Struct] Cache (go/cache.go:16)
+  [Function] BuildCache (go/cache.go:33)
+  [Function] WarmCache (go/cache.go:37)
+  [Function] build_cache (python/cache.py:30)
+  [Function] warm_cache (python/cache.py:34)
+  [Function] slugify (python/util.py:8)
+  [Struct] Entry (rust/lib.rs:10)
+  [Struct] MemoryStore (rust/lib.rs:25)
+  [Function] build_store (rust/lib.rs:39)
+  [Function] warm_cache (rust/lib.rs:45)
+  [Function] normalize (rust/lib.rs:60)
+  [Function] buildCache (ts/cache.ts:34)
+  [Function] warmCache (ts/cache.ts:38)
+  [Function] slugify (ts/util.ts:5)
+
+=== complexity ===
+No functions above complexity threshold (5)
+
+=== complexity-threshold-1 ===
+20 most complex functions (threshold 1):
+
+    4 ████ [Function] warmCache:ts/cache.ts
+    3 ███ [Function] WarmCache:go/cache.go
+    3 ███ [Function] warm_cache:python/cache.py
+    3 ███ [Method] get:rust/lib.rs
+    3 ███ [Method] put:rust/lib.rs
+    3 ███ [Function] warm_cache:rust/lib.rs
+    1 █ [Method] Label:go/cache.go
+    1 █ [Method] Get:go/cache.go
+    1 █ [Method] Put:go/cache.go
+    1 █ [Function] BuildCache:go/cache.go
+    1 █ [Function] normalize:go/cache.go
+    1 █ [Method] label:python/cache.py
+    1 █ [Method] __init__:python/cache.py
+    1 █ [Method] get:python/cache.py
+    1 █ [Method] put:python/cache.py
+    1 █ [Function] build_cache:python/cache.py
+    1 █ [Function] normalize:python/util.py
+    1 █ [Function] slugify:python/util.py
+    1 █ [Function] build_store:rust/lib.rs
+    1 █ [Function] normalize:rust/lib.rs
+
+=== detect ===
+13 symbols affected across 1 files:
+
+  [Struct] Entry (rust/lib.rs)
+  [Const] MAX_ENTRIES (rust/lib.rs)
+  [Struct] MemoryStore (rust/lib.rs)
+  [Type] Registry (rust/lib.rs)
+  [Enum] Status (rust/lib.rs)
+  [Trait] Store (rust/lib.rs)
+  [Function] build_store (rust/lib.rs)
+  [Method] get (rust/lib.rs)
+  [Function] normalize (rust/lib.rs)
+  [Method] put (rust/lib.rs)
+  [Import] use std::collections::HashMap (rust/lib.rs)
+  [Module] util (rust/lib.rs)
+  [Function] warm_cache (rust/lib.rs)
+
+=== timeline ===
+No change history for "Cache"
+
+=== evolution ===
+
+
+=== changes ===
+No changes since last anchor
+
+Session Anchor (save for next session):
+  episode: 
+  time:    <TS>
+
+=== missing-symbol ===
+Symbol "NoSuchSymbol" not found
+
+=== forget ===
+✓ Removed baseline from memory
+
+=== repos-after-forget ===
+No indexed repositories. Run `tok mem index <path>` to get started.

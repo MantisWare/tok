@@ -1,0 +1,54 @@
+# Build
+/target
+
+# Environment & Secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+credentials.json
+secrets.json
+*.secret
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+.next
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+*.cast.bak
+
+# Benchmark results
+scripts/benchmark/
+benchmark-report.md
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+tok_tracking.db
+claudedocs
+.omc
+
+# Vitals provenance data
+.vitals/
+.worktrees/
+
+# icm 
+.fastembed_cache/
+
+# Derived code graph. Rebuilt from source by `tok mem index`, so committing it
+# would only produce merge conflicts on a file no human reads. The `**/` prefix
+# matters: a pattern with an interior slash is anchored to the repo root, which
+# would miss the copies that tests create under fixture directories.
+**/.tok/graph/

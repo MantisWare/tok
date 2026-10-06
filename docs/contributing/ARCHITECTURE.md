@@ -21,7 +21,8 @@
 11. [Build Optimizations](#build-optimizations)
 12. [Extensibility Guide](#extensibility-guide)
 13. [Agent Memory Gateway](#agent-memory-gateway)
-14. [Architecture Decision Records](#architecture-decision-records)
+14. [The code graph](#the-code-graph)
+15. [Architecture Decision Records](#architecture-decision-records)
 
 ---
 
@@ -189,6 +190,7 @@ Savings by ecosystem:
 - **Discover / rewrite**: `src/discover/` — lexer, registry, rules, providers, reports.
 - **Analytics**: `src/analytics/` — `gain`, `cc_economics`, session reporting, etc.
 - **Structural code memory**: `src/mem/` — symbol index, FTS, graph queries (`tok mem`; DB: `memory.db`).
+- **Code graph**: `src/graph/` — tree-sitter extraction and the incremental build pipeline; `src/query/` — retrieval; `src/markdown/` — the committed card layer; `src/mcp/` — the agent-facing server. See [The code graph](#the-code-graph) below.
 - **Agent memory**: `src/agent_memory/` — rules, preferences, project facts (`tok memory`; DB: `tok-memory.db`). Hooks via `tok hook memory-retrieve` / `memory-extract`.
 
 ### Representative command coverage
@@ -1013,6 +1015,59 @@ TOK implements a **local-first agent memory layer** (`tok memory`) inspired by M
 **Config** (`config.toml`): `[memory]` with `enabled` (default `true` after `tok init -g`), `[memory.context]` token budget, `[memory.extraction]`, `[memory.privacy]`.
 
 **Help:** `tok man memory` · full design spec: [TOK_Memory_Gateway_Mem0_Inspired_Architecture.md](../TOK_Memory_Gateway_Mem0_Inspired_Architecture.md)
+
+---
+
+## The code graph
+
+Every filter in `src/cmds/` compresses one command's output. The code graph attacks a different cost: an agent reading files to work out where something lives. It is the only subsystem that runs a parser over the repository rather than over a command's stdout.
+
+### Storage: two writes, one truth
+
+The graph is written to `.tok/graph/` inside the repository being indexed, not to the shared data directory, because it describes that checkout and should be thrown away with it. `.tok/graph/` is gitignored.
+
+Every index also **projects** into the existing `memory.db` tables. `tok mem context|impact|relations|central|dead-code` query `symbols` and `edges` directly, and `episodes.symbol_id` holds a symbol id computed as `sha256(repo_id:file_path:name:kind)[:16]`. That formula is frozen: the projection recomputes exactly the same ids, so recorded history keeps resolving. The graph's own readable ids (`ts/cache.ts::Cache`) are carried alongside in the additive `symbols.graph_id` column.
+
+The graph files are the source of truth; SQLite is a projection of them. If the two ever disagree, re-indexing rewrites the projection.
+
+### Build pipeline (`src/graph/`)
+
+```
+walk ── fingerprint probe ── extract (cached) ── resolve ── write ── project
+         size+mtime, then     tree-sitter per     names to     .tok/graph/   memory.db
+         hash on suspect      file, cached by     node ids
+                              content hash
+```
+
+- **Fingerprints** are checked in two tiers: size and mtime first, content hash only when those look suspect. Hashing every file on every query would put the cost back where the cache was meant to remove it.
+- **Extraction** is per file and cached by content hash plus an extractor stamp, so changing an extractor invalidates its entries without a manual cache wipe.
+- **Resolution** happens after all files are extracted, because a call in one file names a symbol defined in another. Ambiguous references are dropped rather than guessed — a wrong edge is worse than a missing one, since it shows up as a confident wrong answer.
+- **Refresh** is guarded by a lock file with a bounded wait (2000ms, 50ms poll), so two agents editing simultaneously do not interleave writes. `TOK_GRAPH_NO_REFRESH` pins the graph; `TOK_GRAPH_REFRESH=hash` forces full hashing.
+
+Languages without a grammar fall back to `src/mem/parser_regex.rs`, which also still backs `tok forgemap`.
+
+### Retrieval (`src/query/`)
+
+`tok mem ask` fuses two rankers that measure different things:
+
+- **Lexical**: BM25 over identifier-aware tokens, so `warmCache` matches `warm`, `cache`, and `warmcache`.
+- **Structural**: personalized PageRank seeded from the lexical hits, which surfaces the symbol everything relevant points at even when its name never matched.
+
+Their scores are not comparable, so they are combined with **reciprocal rank fusion** — rank order survives, absolute scales do not need to be reconciled. Test files are penalized rather than excluded.
+
+In a monorepo each sub-project is ranked **separately**, with its own IDF, before fusion. A shared corpus would let a large package's vocabulary drown a small one's. Scopes are discovered from workspace markers (`pnpm-workspace.yaml`, `package.json#workspaces`, Cargo `[workspace] members`, `go.work`, or per-directory manifests), collapsed past depth 2, and folded back into the root if they hold too little to rank. A parent directory of sibling git repositories federates the same machinery across children.
+
+### Committed markdown (`src/markdown/`)
+
+`tok mem cards` writes `.tok/map/` — one card per file plus an `INDEX.md` — and these *are* committed. Generated content sits inside `<!-- tok:generated:start -->` markers so hand-written notes outside them survive regeneration. `tok mem check` reports drift; `--strict` exits non-zero for CI.
+
+### Agent access (`src/mcp/`)
+
+`tok mcp` speaks JSON-RPC 2.0 over stdio, hand-rolled rather than pulled from a crate to keep startup under the gate. It exposes `ask`, `skeleton`, `grep`, `map`, `relations`, and `check`, each under both a `tok_` and a `graft_` name. `run_cli` skips telemetry, the update check, and hook warnings for `tok mcp`, since anything on stdout that is not a JSON-RPC frame breaks the session.
+
+### Hot path exclusion
+
+Auto-refresh runs only for `tok mem ask|skeleton|grep|map|impact` and MCP tool calls. `tok rewrite`, `tok hook *`, and every `src/cmds/` filter are excluded by design: a graph rebuild must never sit between an agent and its command. Grammars are constructed lazily on first extraction, so `tok git status` never pays for them.
 
 ---
 

@@ -28,6 +28,46 @@ use crate::cmds::system::{
     tree, wc_cmd,
 };
 
+/// Which hosts a `tok init` invocation is targeting.
+///
+/// The flags predate this function and do not form a clean enum: `--all` means
+/// everything, the single-purpose flags each mean one host, and the bare
+/// command means Claude. Mapping them here keeps the graph wiring pointed at
+/// exactly what the rest of init touched.
+fn selected_hosts(
+    all: bool,
+    gemini: bool,
+    copilot: bool,
+    codex: bool,
+    opencode: bool,
+    agent: Option<AgentTarget>,
+) -> Vec<crate::hooks::graph_wiring::Host> {
+    use crate::hooks::graph_wiring::Host;
+
+    if all {
+        return Host::all().to_vec();
+    }
+    if gemini {
+        return vec![Host::Gemini];
+    }
+    if copilot {
+        return vec![Host::Copilot];
+    }
+    if codex {
+        return vec![Host::Codex];
+    }
+    if opencode {
+        return vec![Host::OpenCode];
+    }
+
+    match agent {
+        Some(AgentTarget::Cursor) => vec![Host::Cursor],
+        Some(AgentTarget::Windsurf) => vec![Host::Windsurf],
+        Some(AgentTarget::Cline) => vec![Host::Cline],
+        Some(AgentTarget::Claude) | None => vec![Host::Claude],
+    }
+}
+
 /// Run the subcommand selected on `cli` and return the process exit code.
 pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
     let code = match cli.command {
@@ -397,9 +437,14 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
             codex,
             copilot,
             all,
+            no_graph,
         } => {
+            // Which hosts this invocation is talking to, so the graph is wired
+            // into exactly what the user asked for and nothing else.
+            let hosts = selected_hosts(all, gemini, copilot, codex, opencode, agent);
+
             if all {
-                crate::hooks::init::run_all(cli.verbose)?;
+                crate::hooks::init::run_all(cli.verbose, !no_graph)?;
             } else if show {
                 crate::hooks::init::show_config(codex)?;
             } else if uninstall {
@@ -442,7 +487,20 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
                     codex,
                     patch_mode,
                     cli.verbose,
+                    !no_graph,
                 )?;
+            }
+
+            // Graph wiring is on by default: an agent that does not know the
+            // graph exists keeps reading whole files, which is the cost this
+            // whole subsystem was built to remove.
+            if !show && !no_graph {
+                let layout = crate::hooks::graph_wiring::Layout::detect(std::env::current_dir()?)?;
+                if uninstall {
+                    crate::hooks::graph_wiring::unwire(&hosts, &layout, cli.verbose)?;
+                } else {
+                    crate::hooks::graph_wiring::wire(&hosts, &layout, cli.verbose)?;
+                }
             }
             0
         }
@@ -762,6 +820,15 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
                 HookCommands::MemoryExtract { agent, stdin } => {
                     crate::hooks::memory_hook::run_memory_extract(Some(agent.as_str()), stdin)?;
                 }
+                HookCommands::GraphSession { agent, json, stdin } => {
+                    crate::hooks::graph_hook::run_session(Some(agent.as_str()), json, stdin)?;
+                }
+                HookCommands::GraphPostedit { stdin } => {
+                    crate::hooks::graph_hook::run_postedit(stdin)?;
+                }
+                HookCommands::GraphSync => {
+                    crate::hooks::graph_hook::run_sync()?;
+                }
             }
             0
         }
@@ -1078,6 +1145,8 @@ pub(crate) fn dispatch(cli: Cli) -> Result<i32> {
             crate::print_manual(&filter);
             0
         }
+
+        Commands::Mcp { dir } => crate::mcp::run(dir.as_deref())?,
     };
     Ok(code)
 }

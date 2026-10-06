@@ -203,6 +203,7 @@ fn repair_hook(verbose: u8) -> Result<()> {
         false,           // codex
         PatchMode::Auto, // non-interactive
         verbose,
+        true, // graph
     )
 }
 

@@ -74,6 +74,15 @@ tok uses a **command proxy architecture**:
 3. **`src/cmds/*/`** — Each filter module runs the underlying tool, compresses output, and records savings.
 4. **`src/core/tracking.rs`** — Persists token metrics to SQLite (`history.db` under the tok data directory; paths differ by OS — see `src/core/constants.rs`).
 
+Alongside the filters sits the **code graph**, which is a different shape of subsystem:
+
+- **`src/graph/`** — tree-sitter extraction, reference resolution, the incremental build pipeline, and the repo-local `.tok/graph/` store. It dual-writes: the graph files are the source of truth, and `src/graph/project.rs` projects into the existing `memory.db` tables so `tok mem context|impact|relations` and `episodes.symbol_id` keep working unchanged.
+- **`src/query/`** — retrieval over the graph: BM25 lexical scoring, personalized PageRank, RRF fusion, and the `ask`/`skeleton`/`grep`/`map` renderings. Scope-aware for monorepos (`src/query/scoped.rs`) and federated across sibling repos (`src/query/federate.rs`).
+- **`src/markdown/`** — the committed `.tok/map/` card layer and `tok mem check` drift reporting.
+- **`src/mcp/`** — stdio JSON-RPC 2.0 server exposing the graph to agents.
+
+The `graph` Cargo feature is in the default set. Per-language `graph-*` features exist for slim builds; a `--no-default-features` build must keep compiling.
+
 For narrative flow, folder map, and hook rewrite pipeline, read **[docs/contributing/TECHNICAL.md](docs/contributing/TECHNICAL.md)** first. For depth (filtering taxonomy, lifecycle diagrams, ADR-style detail), use **[docs/contributing/ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)**. For build, test, and release from a clone, use **[docs/contributing/DEVELOPMENT.md](docs/contributing/DEVELOPMENT.md)**.
 
 Module responsibilities are documented in each folder's `README.md` and each file's `//!` doc header. Browse `src/cmds/*/` to discover available filters.

@@ -62,6 +62,21 @@ tok ruff check . / mypy . / rubocop / golangci-lint run / format
 tok gt log / submit / sync / restack / create / branch
 ```
 
+## Code Graph — try these before reading files
+
+```bash
+tok mem ask "<question>"   # Ranked symbols with source inlined. Start here.
+tok mem skeleton <file>    # Every signature, no bodies
+tok mem grep "<pattern>"   # Text search grouped by enclosing symbol
+tok mem map                # Layout, hubs, entry points
+tok mem check              # Drift between .tok/map/ and the code
+```
+
+Add `--in <path>` to `ask`/`grep` to stay inside one package of a monorepo.
+Also on MCP as `tok_ask`, `tok_skeleton`, `tok_grep`, `tok_map`,
+`tok_relations`, `tok_check`. The graph refreshes before each query, so a
+just-made edit is already visible.
+
 ## Code Intelligence (use when needed)
 
 ```bash

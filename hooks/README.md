@@ -31,6 +31,18 @@ All rewrite logic lives in the Rust binary (`src/discover/registry.rs`). Hook sc
 
 **Agent memory** (`tok memory`, `src/agent_memory/`): separate from structural `tok mem`. After `tok init -g`, memory is enabled by default. `sessionStart` hooks call `tok hook memory-retrieve --json` to inject rules/preferences into context; post-turn hooks can call `tok hook memory-extract` with user/assistant JSON on stdin. See [docs/TOK_Memory_Gateway_Mem0_Inspired_Architecture.md](../docs/TOK_Memory_Gateway_Mem0_Inspired_Architecture.md).
 
+**Code graph** (`src/graph/`, `src/query/`): also installed by `tok init`, and also on by default. Three hooks keep it useful without the agent having to ask:
+
+| Hook | Event | What it does |
+| --- | --- | --- |
+| `tok hook graph-session` | `SessionStart` | Injects repo orientation — layout, hubs, entry points — using the same `additional_context` contract as memory |
+| `tok hook graph-postedit` | `PostToolUse` on edits | Refreshes the graph so the next query sees the change. No-ops on a repo that was never indexed |
+| `tok hook graph-sync` | manual / CI | Regenerates the committed `.tok/map/` cards and reports drift |
+
+Alongside the hooks, `tok init` registers `tok mcp` as an MCP server so the agent can call the graph directly rather than shelling out. `tok init --no-graph` skips the hooks, the registration, and the instruction section; `tok init --uninstall` removes all three. Re-running `tok init` rewrites a registration that points at an old binary and leaves any other MCP server in the same config untouched.
+
+`TOK_GRAPH_NO_REFRESH=1` stops the hooks and queries from rebuilding the graph, which is what you want in CI.
+
 ## Directory Structure
 
 Each agent subdirectory has its own README with hook-specific details:

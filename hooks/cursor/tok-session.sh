@@ -18,7 +18,7 @@ fi
 
 VERSION=$(tok --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 
-BASE_CONTEXT="TOK (Token Optimization Kit v${VERSION:-unknown}) is installed. All shell commands are automatically rewritten by the preToolUse hook (e.g. git status becomes tok git status). TOK filters 60+ tools: git, cargo, npm, pnpm, docker, kubectl, go, pytest, ruff, vitest, playwright, prisma, tsc, eslint, and more. Analytics: tok gain (savings stats), tok gain --graph (daily chart), tok gain --history (command log), tok discover (missed opportunities), tok session (cross-session stats), tok cc-economics (Claude spend vs savings), tok learn (past CLI fixes). Code intelligence: tok mem index/search/find/context/impact/dead-code/changes (structural code memory), tok memory status/list/search (agent memory for rules and preferences), tok forgemap init/check/manifest (source annotation engine). Security: tok --security <cmd> (obfuscate sensitive data), tok security-inspect <text> (dry-run), tok doctor --slm (SLM health). Config: tok config, tok verify, tok trust/untrust, tok proxy <cmd> (raw passthrough). Reference: tok man (full command manual), tok man <topic> (filtered). Flags: -u (ultra-compact), --security-mode <mode>. Verification: tok --version, tok gain, which tok."
+BASE_CONTEXT="TOK (Token Optimization Kit v${VERSION:-unknown}) is installed. All shell commands are automatically rewritten by the preToolUse hook (e.g. git status becomes tok git status). TOK filters 60+ tools: git, cargo, npm, pnpm, docker, kubectl, go, pytest, ruff, vitest, playwright, prisma, tsc, eslint, and more. Analytics: tok gain (savings stats), tok gain --graph (daily chart), tok gain --history (command log), tok discover (missed opportunities), tok session (cross-session stats), tok cc-economics (Claude spend vs savings), tok learn (past CLI fixes). Code graph (prefer these over reading files): tok mem ask \"<question>\" (ranked symbols with source inlined), tok mem skeleton <file> (signatures only), tok mem grep \"<pattern>\" (hits grouped by enclosing symbol), tok mem map (layout, hubs, entry points), tok mem check (drift in .tok/map/); add --in <path> to scope to one package; the same six are on MCP as tok_ask/tok_skeleton/tok_grep/tok_map/tok_relations/tok_check. Code intelligence: tok mem index/search/find/context/impact/dead-code/changes (structural code memory), tok memory status/list/search (agent memory for rules and preferences), tok forgemap init/check/manifest (source annotation engine). Security: tok --security <cmd> (obfuscate sensitive data), tok security-inspect <text> (dry-run), tok doctor --slm (SLM health). Config: tok config, tok verify, tok trust/untrust, tok proxy <cmd> (raw passthrough). Reference: tok man (full command manual), tok man <topic> (filtered). Flags: -u (ultra-compact), --security-mode <mode>. Verification: tok --version, tok gain, which tok."
 
 MEMORY_BLOCK=""
 if command -v jq &>/dev/null; then
@@ -28,13 +28,25 @@ else
   MEMORY_BLOCK=$(printf '%s' "$INPUT" | tok hook memory-retrieve --stdin --agent cursor --event session_start 2>/dev/null || true)
 fi
 
-if [ -n "$MEMORY_BLOCK" ]; then
-  COMBINED="${BASE_CONTEXT}
-
-${MEMORY_BLOCK}"
+# Cursor honours a single sessionStart hook, so the code graph orientation is
+# composed in here rather than registered as a second entry that would be
+# silently dropped.
+GRAPH_BLOCK=""
+if command -v jq &>/dev/null; then
+  GRAPH_JSON=$(printf '%s' "$INPUT" | tok hook graph-session --json --stdin --agent cursor 2>/dev/null || echo '{}')
+  GRAPH_BLOCK=$(printf '%s' "$GRAPH_JSON" | jq -r '.additional_context // empty' 2>/dev/null || true)
 else
-  COMBINED="$BASE_CONTEXT"
+  GRAPH_BLOCK=$(printf '%s' "$INPUT" | tok hook graph-session --stdin --agent cursor 2>/dev/null || true)
 fi
+
+COMBINED="$BASE_CONTEXT"
+for BLOCK in "$MEMORY_BLOCK" "$GRAPH_BLOCK"; do
+  if [ -n "$BLOCK" ]; then
+    COMBINED="${COMBINED}
+
+${BLOCK}"
+  fi
+done
 
 if command -v jq &>/dev/null; then
   jq -n --arg ctx "$COMBINED" '{additional_context: $ctx}'
