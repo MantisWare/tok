@@ -114,9 +114,15 @@ pub fn run(
     let mut by_file: HashMap<String, Vec<(usize, String)>> = HashMap::new();
     let mut total = 0;
 
-    // Compile context regex once (instead of per-line in clean_line)
+    // Compile the context-window regex once (instead of per-line in clean_line).
+    // grep patterns are regexes, so try the raw pattern first — wrapped in a
+    // non-capturing group so alternation like `a|b` groups correctly — and fall
+    // back to a literal match if it does not compile. (The previous code escaped
+    // the pattern unconditionally, so a regex pattern silently never matched.)
     let context_re = if context_only {
-        Regex::new(&format!("(?i).{{0,20}}{}.*", regex::escape(pattern))).ok()
+        Regex::new(&format!("(?i).{{0,20}}(?:{}).*", pattern))
+            .or_else(|_| Regex::new(&format!("(?i).{{0,20}}{}.*", regex::escape(pattern))))
+            .ok()
     } else {
         None
     };
@@ -397,6 +403,25 @@ src/b.rs:5:    let target = 2;
         // Must not panic on multi-byte boundary and must shrink the output.
         assert!(rendered.chars().count() < 500);
         assert!(rendered.contains('…'));
+    }
+
+    // Regression: --context-only escaped the pattern, so a regex pattern (e.g.
+    // alternation) was turned into a literal that never matched. The raw
+    // pattern must drive the window, with a literal fallback for bad regexes.
+    #[test]
+    fn context_only_regex_pattern_is_not_escaped_to_literal() {
+        let build = |p: &str| {
+            Regex::new(&format!("(?i).{{0,20}}(?:{}).*", p))
+                .or_else(|_| Regex::new(&format!("(?i).{{0,20}}{}.*", regex::escape(p))))
+                .unwrap()
+        };
+        // Alternation matches either branch — would fail if escaped to literal.
+        let re = build("foo|bar");
+        assert!(re.is_match("x bar y"));
+        assert!(re.is_match("x foo y"));
+        // An invalid regex falls back to a literal match and never panics.
+        let re2 = build("(unclosed");
+        assert!(re2.is_match("has (unclosed paren"));
     }
 
     #[test]
