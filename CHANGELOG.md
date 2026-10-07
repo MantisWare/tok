@@ -31,6 +31,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * The `graph` feature is in the default set, so `cargo install tok` gets everything above. Per-language `lang-*` features allow slim builds, and `--no-default-features` builds without tree-sitter entirely. The grammars raise the binary from roughly 8MB to roughly 13MB.
 * Symbol ids in `memory.db` are unchanged. The graph is written to a repo-local `.tok/graph/` directory and projected into the existing `symbols` and `edges` tables, so `tok mem context|impact|relations` and recorded `episodes` keep working exactly as before.
 
+## [0.2.0](https://github.com/MantisWare/tok/compare/v0.1.60...v0.2.0) (2026-10-07)
+
+
+### Features
+
+* improve CLI error UX with typo suggestions and memory hooks ([f6bee6f](https://github.com/MantisWare/tok/commit/f6bee6ff611310b331c6789ca6a968e2eda4235a))
+
+
+### Bug Fixes
+
+* **ci:** diff large PRs locally in doc review, use real base in security scan ([c981251](https://github.com/MantisWare/tok/commit/c9812511b97ca77a40ba3bb3480bb0a0ba5fd396))
+* **ci:** pin test-thread stack, let the base-branch guard speak ([a5fe83e](https://github.com/MantisWare/tok/commit/a5fe83e81b1866f7e09fe4e0a85c66acc63cd33c))
+* **find:** include hidden and gitignored files to match `find` ([e551796](https://github.com/MantisWare/tok/commit/e5517961ea0c3063828c3db924b638a4b71afe2b))
+* **grep:** honor regex patterns in --context-only windowing ([0be05b6](https://github.com/MantisWare/tok/commit/0be05b6c330d56451e71ed079fb4e05c6615552b))
+* **grep:** preserve context lines for -A/-B/-C instead of dropping them ([6e81849](https://github.com/MantisWare/tok/commit/6e818491734950d6c47860949a29dda4b5077aae))
+* **grep:** stop mangling single-file matches that contain colons ([edd42cd](https://github.com/MantisWare/tok/commit/edd42cd29c08c891215d341ec9fe9bafb6c9a0ef))
+* **hooks:** keep Cargo.lock in step with the pre-commit version bump ([0cdae0e](https://github.com/MantisWare/tok/commit/0cdae0ec8a18541f5febfa77b6eda917a66d4203))
+* **test:** make discover/session/init CLI tests hermetic to the machine ([a4b0623](https://github.com/MantisWare/tok/commit/a4b0623baa4fbdc1963271cdee3d13cdaac7bc4e))
+* **test:** unbreak the Windows CI job ([da61d84](https://github.com/MantisWare/tok/commit/da61d8429d441ddb33ab75ca119ee3d087f4937a))
+
 ## [0.35.0](https://github.com/MantisWare/tok/compare/v0.34.3...v0.35.0) (2026-04-06)
 
 
